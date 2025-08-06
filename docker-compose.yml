@@ -1,0 +1,262 @@
+version: '3.8'
+
+services:
+  # Neo4j Graph Database
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: orion-neo4j
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/orion_secure_pwd
+      - NEO4J_dbms_memory_pagecache_size=1G
+      - NEO4J_dbms_memory_heap_max__size=2G
+      - NEO4J_dbms_memory_heap_initial__size=1G
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_plugins:/plugins
+    networks:
+      - orion-network
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: orion-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=orion
+      - POSTGRES_PASSWORD=orion_secure_pwd
+      - POSTGRES_DB=orion_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - orion-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orion"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: orion-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass orion_redis_pwd
+    volumes:
+      - redis_data:/data
+    networks:
+      - orion-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Elasticsearch for RAG
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.3
+    container_name: orion-elasticsearch
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - orion-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # MinIO Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: orion-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=orion_admin
+      - MINIO_ROOT_PASSWORD=orion_minio_pwd
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - orion-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ORION API Server
+  orion-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: orion-api
+    ports:
+      - "8000:8000"
+    environment:
+      - ORION_CONFIG=/app/config/config.yaml
+      - POSTGRES_HOST=postgres
+      - NEO4J_URI=bolt://neo4j:7687
+      - REDIS_HOST=redis
+      - ELASTICSEARCH_HOST=elasticsearch
+      - MINIO_ENDPOINT=minio:9000
+    volumes:
+      - ./config:/app/config:ro
+      - ./templates:/app/templates:ro
+      - orion_logs:/app/logs
+    depends_on:
+      - postgres
+      - neo4j
+      - redis
+      - elasticsearch
+      - minio
+    networks:
+      - orion-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ORION Web UI (Streamlit)
+  orion-ui:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ui
+    container_name: orion-ui
+    ports:
+      - "8501:8501"
+    environment:
+      - ORION_API_URL=http://orion-api:8000
+    depends_on:
+      - orion-api
+    networks:
+      - orion-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Celery Worker for Background Tasks
+  orion-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: orion-worker
+    environment:
+      - ORION_CONFIG=/app/config/config.yaml
+      - CELERY_BROKER_URL=redis://orion_redis_pwd@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://orion_redis_pwd@redis:6379/0
+    volumes:
+      - ./config:/app/config:ro
+      - simulation_data:/app/simulations
+    depends_on:
+      - redis
+      - postgres
+      - neo4j
+    networks:
+      - orion-network
+    command: celery -A orion.tasks worker --loglevel=info
+
+  # Flower for Celery Monitoring
+  flower:
+    image: mher/flower:2.0
+    container_name: orion-flower
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://orion_redis_pwd@redis:6379/0
+      - FLOWER_PORT=5555
+    depends_on:
+      - redis
+    networks:
+      - orion-network
+
+  # Prometheus for Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: orion-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - orion-network
+
+  # Grafana for Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: orion-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=orion_grafana_pwd
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - orion-network
+
+  # Jupyter Lab for Interactive Development
+  jupyter:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.jupyter
+    container_name: orion-jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=orion_jupyter_token
+    volumes:
+      - ./notebooks:/home/jovyan/work
+      - ./src:/home/jovyan/orion:ro
+    networks:
+      - orion-network
+
+networks:
+  orion-network:
+    driver: bridge
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_plugins:
+  postgres_data:
+  redis_data:
+  elasticsearch_data:
+  minio_data:
+  orion_logs:
+  simulation_data:
+  prometheus_data:
+  grafana_data:

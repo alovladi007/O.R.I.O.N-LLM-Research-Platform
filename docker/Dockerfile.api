@@ -1,0 +1,70 @@
+# ORION API Server Dockerfile
+FROM python:3.9-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    POETRY_VERSION=1.7.1 \
+    POETRY_HOME="/opt/poetry" \
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_NO_INTERACTION=1 \
+    PYSETUP_PATH="/opt/pysetup" \
+    VENV_PATH="/opt/pysetup/.venv"
+
+# Add poetry to PATH
+ENV PATH="$POETRY_HOME/bin:$VENV_PATH/bin:$PATH"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    gcc \
+    g++ \
+    make \
+    git \
+    libpq-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    libffi-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Poetry
+RUN curl -sSL https://install.python-poetry.org | python3 -
+
+# Set working directory
+WORKDIR $PYSETUP_PATH
+
+# Copy poetry files
+COPY pyproject.toml poetry.lock ./
+
+# Install dependencies
+RUN poetry install --no-dev --no-root
+
+# Create app directory
+WORKDIR /app
+
+# Copy application code
+COPY src/ ./src/
+COPY config/ ./config/
+COPY templates/ ./templates/
+COPY scripts/ ./scripts/
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/data /app/models
+
+# Create non-root user
+RUN useradd -m -u 1000 orion && \
+    chown -R orion:orion /app
+
+# Switch to non-root user
+USER orion
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run the application
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
