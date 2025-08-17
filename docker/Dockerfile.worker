@@ -1,4 +1,4 @@
-# Multi-stage build for production API
+# Multi-stage build for production worker
 FROM python:3.11-slim as builder
 
 # Install build dependencies
@@ -17,14 +17,12 @@ RUN pip install --no-cache-dir poetry==1.7.1
 # Copy dependency files
 COPY pyproject.toml poetry.lock ./
 
-# Install dependencies
+# Install dependencies including celery extras
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root --only main
 
 # Copy source code
 COPY src ./src
-COPY alembic ./alembic
-COPY alembic.ini ./
 
 # Final stage
 FROM python:3.11-slim
@@ -49,7 +47,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app /app
 
 # Create necessary directories
-RUN mkdir -p /app/logs /app/tmp && \
+RUN mkdir -p /app/logs /app/tmp /app/data && \
     chown -R orion:orion /app
 
 # Switch to non-root user
@@ -59,14 +57,11 @@ USER orion
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
-    PORT=8000
+    C_FORCE_ROOT=false
 
-# Health check
+# Health check using celery inspect
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:${PORT}/health || exit 1
+    CMD celery -A src.worker.celery_app inspect ping -d celery@$HOSTNAME || exit 1
 
-# Expose port
-EXPOSE ${PORT}
-
-# Run the application
-CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--loop", "uvloop", "--access-log"]
+# Run the celery worker
+CMD ["celery", "-A", "src.worker.celery_app", "worker", "--loglevel=info", "--concurrency=4", "--max-tasks-per-child=1000"]

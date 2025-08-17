@@ -1,0 +1,240 @@
+name: Security Audit
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight
+  pull_request:
+    paths:
+      - '**/package*.json'
+      - '**/requirements*.txt'
+      - '**/pyproject.toml'
+      - '**/poetry.lock'
+      - '**/Pipfile*'
+      - '**/go.mod'
+      - '**/go.sum'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+  workflow_dispatch:
+
+jobs:
+  # Python Security Audit
+  python-audit:
+    name: Python Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety bandit pip-audit
+      
+      - name: Run Safety check
+        run: safety check --json
+        continue-on-error: true
+      
+      - name: Run Bandit
+        run: bandit -r src/ -f json -o bandit-report.json
+        continue-on-error: true
+      
+      - name: Run pip-audit
+        run: pip-audit --desc
+        continue-on-error: true
+      
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: python-security-reports
+          path: |
+            bandit-report.json
+            safety-report.json
+
+  # JavaScript/Node.js Security Audit
+  node-audit:
+    name: Node.js Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Run npm audit
+        working-directory: ./frontend
+        run: |
+          npm audit --json > npm-audit-report.json || true
+          npm audit
+        continue-on-error: true
+      
+      - name: Run Snyk
+        uses: snyk/actions/node@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high --json-file-output=snyk-report.json
+      
+      - name: Upload Security Reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: node-security-reports
+          path: |
+            frontend/npm-audit-report.json
+            snyk-report.json
+
+  # Container Security Scan
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Trivy on Dockerfiles
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-config-results.sarif'
+      
+      - name: Run Hadolint on Dockerfiles
+        run: |
+          docker run --rm -i hadolint/hadolint < docker/Dockerfile.api > hadolint-api.txt
+          docker run --rm -i hadolint/hadolint < docker/Dockerfile.frontend > hadolint-frontend.txt
+          docker run --rm -i hadolint/hadolint < docker/Dockerfile.worker > hadolint-worker.txt
+        continue-on-error: true
+      
+      - name: Upload Container Scan Results
+        uses: actions/upload-artifact@v3
+        with:
+          name: container-security-reports
+          path: |
+            trivy-config-results.sarif
+            hadolint-*.txt
+
+  # SAST (Static Application Security Testing)
+  sast:
+    name: SAST Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      
+      - name: CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+        with:
+          languages: 'python,javascript,typescript'
+
+  # License Compliance Check
+  license-check:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: License Finder
+        run: |
+          docker run -v $PWD:/scan licensefinder/license_finder /bin/bash -lc "cd /scan && license_finder"
+        continue-on-error: true
+      
+      - name: FOSSA Scan
+        uses: fossas/fossa-action@main
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+
+  # Dependency Update Check
+  dependency-check:
+    name: Dependency Updates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check Python Dependencies
+        run: |
+          pip install pip-review
+          pip-review --local --auto
+      
+      - name: Check Node Dependencies
+        working-directory: ./frontend
+        run: |
+          npx npm-check-updates -u
+          npm outdated || true
+      
+      - name: Create Pull Request
+        if: github.event_name == 'schedule'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: 'chore: update dependencies'
+          title: 'Automated Dependency Updates'
+          body: |
+            ## Automated Dependency Updates
+            
+            This PR contains automated dependency updates discovered by the security audit workflow.
+            
+            Please review the changes carefully before merging.
+          branch: automated-dependency-updates
+          labels: |
+            dependencies
+            security
+
+  # Security Summary
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs: [python-audit, node-audit, container-scan, sast]
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+      
+      - name: Generate Security Report
+        run: |
+          echo "# Security Audit Summary" > security-summary.md
+          echo "Date: $(date)" >> security-summary.md
+          echo "" >> security-summary.md
+          
+          echo "## Python Security" >> security-summary.md
+          if [ -f python-security-reports/bandit-report.json ]; then
+            echo "Bandit findings: $(jq '.metrics.total' python-security-reports/bandit-report.json)" >> security-summary.md
+          fi
+          echo "" >> security-summary.md
+          
+          echo "## Node.js Security" >> security-summary.md
+          if [ -f node-security-reports/npm-audit-report.json ]; then
+            echo "npm audit findings: $(jq '.metadata.vulnerabilities.total' node-security-reports/npm-audit-report.json)" >> security-summary.md
+          fi
+          echo "" >> security-summary.md
+          
+          echo "## Container Security" >> security-summary.md
+          echo "See attached Trivy and Hadolint reports" >> security-summary.md
+      
+      - name: Upload Summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-summary
+          path: security-summary.md
+      
+      - name: Post to Slack
+        if: github.event_name == 'schedule'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: 'Daily Security Audit Complete - Check the summary for details'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
