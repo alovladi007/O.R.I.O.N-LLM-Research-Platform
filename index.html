@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ORION: Optimized Research & Innovation for Organized Nanomaterials</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+        
+        .logo {
+            font-size: 3rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4, #45b7d1, #96ceb4);
+            background-size: 400% 400%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: gradient 3s ease infinite;
+        }
+        
+        @keyframes gradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        .subtitle {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            margin-bottom: 2rem;
+        }
+        
+        .back-button {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 0.8rem 1.5rem;
+            text-decoration: none;
+            border-radius: 25px;
+            margin-bottom: 2rem;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+        
+        .back-button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+        
+        .platform-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+        
+        .platform-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 2rem;
+            text-align: center;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .platform-card:hover {
+            transform: translateY(-5px);
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .card-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        
+        .card-title {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+        }
+        
+        .card-description {
+            opacity: 0.9;
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+        }
+        
+        .card-button {
+            background: linear-gradient(45deg, #ff6b6b, #4ecdc4);
+            color: white;
+            padding: 0.8rem 1.5rem;
+            text-decoration: none;
+            border-radius: 25px;
+            display: inline-block;
+            transition: all 0.3s ease;
+        }
+        
+        .card-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        .features-section {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+        
+        .features-title {
+            font-size: 2rem;
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+        }
+        
+        .feature-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        
+        .feature-icon {
+            font-size: 1.5rem;
+        }
+        
+        .status-section {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 2rem;
+            text-align: center;
+        }
+        
+        .status-title {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        
+        .status-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 1rem;
+            border-radius: 10px;
+        }
+        
+        .status-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+        
+        .status-value {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #4ecdc4;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="http://127.0.0.1:8081/index.html" class="back-button">← Back to M.Y Engineering</a>
+        
+        <div class="header">
+            <div class="logo">🔬 ORION</div>
+            <div class="subtitle">Optimized Research & Innovation for Organized Nanomaterials</div>
+            <p>Charting new frontiers in material science with AI-powered research automation</p>
+        </div>
+        
+        <div class="platform-grid">
+            <div class="platform-card">
+                <div class="card-icon">🧠</div>
+                <div class="card-title">Knowledge Graph</div>
+                <div class="card-description">
+                    Neo4j-based materials ontology with automated relationship extraction and property-structure-process mapping
+                </div>
+                <a href="orion-platform/src/knowledge_graph/" class="card-button">Explore Graph</a>
+            </div>
+            
+            <div class="platform-card">
+                <div class="card-icon">🤖</div>
+                <div class="card-title">RAG System</div>
+                <div class="card-description">
+                    Hybrid sparse-dense retrieval with cross-encoder reranking and context-aware generation
+                </div>
+                <a href="orion-platform/src/rag/" class="card-button">Access RAG</a>
+            </div>
+            
+            <div class="platform-card">
+                <div class="card-icon">🔮</div>
+                <div class="card-title">Candidate Generation</div>
+                <div class="card-description">
+                    Formula prediction, structure optimization, property targeting, and novelty scoring
+                </div>
+                <a href="orion-platform/src/candidate_generation/" class="card-button">Generate Materials</a>
+            </div>
+            
+            <div class="platform-card">
+                <div class="card-icon">⚡</div>
+                <div class="card-title">Simulation Integration</div>
+                <div class="card-description">
+                    VASP/Quantum ESPRESSO support, LAMMPS molecular dynamics, queue management, and result parsing
+                </div>
+                <a href="orion-platform/src/simulation/" class="card-button">Run Simulations</a>
+            </div>
+            
+            <div class="platform-card">
+                <div class="card-icon">📋</div>
+                <div class="card-title">Protocol Generation</div>
+                <div class="card-description">
+                    Step-by-step procedures, safety recommendations, equipment specifications, and Jinja2 templates
+                </div>
+                <a href="orion-platform/templates/" class="card-button">View Protocols</a>
+            </div>
+            
+            <div class="platform-card">
+                <div class="card-icon">🌐</div>
+                <div class="card-title">Web Interface</div>
+                <div class="card-description">
+                    Next.js frontend with interactive dashboard, chat interface, and analytics
+                </div>
+                <a href="frontend/" class="card-button">Launch Frontend</a>
+            </div>
+        </div>
+        
+        <div class="features-section">
+            <div class="features-title">Key Capabilities</div>
+            <div class="features-grid">
+                <div class="feature-item">
+                    <div class="feature-icon">📚</div>
+                    <div>Literature Mining & Knowledge Graph</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🧬</div>
+                    <div>Intelligent Material Generation</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🔬</div>
+                    <div>Simulation Orchestration</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🧪</div>
+                    <div>Automated Experimental Design</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🔄</div>
+                    <div>Active Learning Loop</div>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">💬</div>
+                    <div>Natural Language Interface</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="status-section">
+            <div class="status-title">Platform Status</div>
+            <div class="status-grid">
+                <div class="status-item">
+                    <div class="status-label">Core Modules</div>
+                    <div class="status-value">✅ Active</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Knowledge Graph</div>
+                    <div class="status-value">✅ Ready</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">RAG System</div>
+                    <div class="status-value">✅ Ready</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Simulation Engine</div>
+                    <div class="status-value">✅ Ready</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Frontend</div>
+                    <div class="status-value">✅ Ready</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">API</div>
+                    <div class="status-value">✅ Ready</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
