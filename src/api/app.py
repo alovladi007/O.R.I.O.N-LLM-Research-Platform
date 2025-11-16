@@ -47,6 +47,7 @@ from .routers import (
     admin_router,
     health_router,
     websocket_router,
+    ml_router,
 )
 from .exceptions import (
     ORIONAPIException,
@@ -223,7 +224,12 @@ def create_app() -> FastAPI:
         prefix=f"{settings.api_prefix}/knowledge",
         tags=["knowledge"]
     )
-    
+    app.include_router(
+        ml_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["machine-learning"]
+    )
+
     # Add admin router if enabled
     if settings.enable_admin_panel:
         app.include_router(
@@ -276,6 +282,7 @@ def create_app() -> FastAPI:
                 "simulations": f"{settings.api_prefix}/simulations",
                 "experiments": f"{settings.api_prefix}/experiments",
                 "knowledge": f"{settings.api_prefix}/knowledge",
+                "ml": f"{settings.api_prefix}/ml",
                 "admin": f"{settings.api_prefix}/admin" if settings.enable_admin_panel else None,
             },
             "websocket": "/ws" if settings.enable_websocket else None,

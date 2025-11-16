@@ -160,6 +160,154 @@ async def create_simulation_job(
     return SimulationJobResponse.model_validate(new_job)
 
 
+@router.post(
+    "/{job_id}/submit",
+    response_model=SimulationJobResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Submit job for execution",
+    description="""
+    Submit a PENDING job to the execution queue.
+
+    This endpoint:
+    - Changes job status from PENDING → QUEUED
+    - Enqueues the job to Celery worker for execution
+    - Returns the updated job
+
+    Can only submit jobs in PENDING status.
+    Jobs that are already QUEUED, RUNNING, or in terminal states cannot be resubmitted.
+
+    The job will be picked up by the next available worker and executed according
+    to its priority.
+    """,
+    responses={
+        200: {
+            "description": "Job submitted successfully",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "423e4567-e89b-12d3-a456-426614174000",
+                        "status": "QUEUED",
+                        "submitted_at": "2024-01-15T10:30:00Z"
+                    }
+                }
+            }
+        },
+        404: {"description": "Job not found"},
+        409: {"description": "Job cannot be submitted in current state"}
+    }
+)
+async def submit_simulation_job(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> SimulationJobResponse:
+    """
+    Submit a simulation job to the execution queue.
+    """
+    logger.info(f"Submitting simulation job: {job_id}")
+
+    # Get job
+    job = await db.get(SimulationJob, job_id)
+    if not job:
+        raise NotFoundError("SimulationJob", job_id)
+
+    # Validate job is in PENDING status
+    if job.status != "PENDING":
+        raise ConflictError(
+            message=f"Job cannot be submitted in current state: {job.status.value}",
+            details={
+                "job_id": str(job_id),
+                "current_status": job.status.value,
+                "expected_status": "PENDING"
+            }
+        )
+
+    # Import here to avoid circular dependency
+    from src.worker.tasks import run_simulation_job as run_simulation_task
+
+    # Update job status to QUEUED
+    job.status = "QUEUED"
+    job.updated_at = datetime.utcnow()
+
+    # Enqueue task to Celery
+    task = run_simulation_task.apply_async(args=[str(job_id)])
+    job.celery_task_id = task.id
+
+    await db.commit()
+    await db.refresh(job)
+
+    logger.info(f"Job {job_id} submitted successfully (task_id: {task.id})")
+
+    return SimulationJobResponse.model_validate(job)
+
+
+@router.get(
+    "/{job_id}/status",
+    summary="Get job status",
+    description="""
+    Get lightweight status information for a simulation job.
+
+    This is a minimal endpoint optimized for polling and monitoring.
+    Returns only essential status fields without loading full job details or relationships.
+
+    Use this for:
+    - Real-time status monitoring
+    - Progress tracking
+    - Polling for job completion
+
+    For full job details, use GET /jobs/{job_id}
+    """,
+    responses={
+        200: {
+            "description": "Job status",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "423e4567-e89b-12d3-a456-426614174000",
+                        "status": "RUNNING",
+                        "progress": 0.45,
+                        "current_step": "SCF iteration",
+                        "error_message": None
+                    }
+                }
+            }
+        },
+        404: {"description": "Job not found"}
+    }
+)
+async def get_job_status(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Get lightweight job status information.
+    """
+    logger.debug(f"Fetching status for job: {job_id}")
+
+    # Query only the fields we need (no joins, no relationships)
+    query = select(
+        SimulationJob.id,
+        SimulationJob.status,
+        SimulationJob.progress,
+        SimulationJob.current_step,
+        SimulationJob.error_message
+    ).where(SimulationJob.id == job_id)
+
+    result = await db.execute(query)
+    row = result.first()
+
+    if not row:
+        raise NotFoundError("SimulationJob", job_id)
+
+    return {
+        "id": row[0],
+        "status": row[1].value,
+        "progress": row[2],
+        "current_step": row[3],
+        "error_message": row[4]
+    }
+
+
 @router.get(
     "",
     response_model=List[SimulationJobResponse],

@@ -39,6 +39,17 @@ from .simulation import (
     SimulationJobResponse,
     SimulationResultResponse,
 )
+from .ml import (
+    PropertyPredictionRequest,
+    PropertyPredictionResponse,
+    ModelInfoResponse,
+    ModelsListResponse,
+    PropertyComparisonRequest,
+    PropertyComparisonResponse,
+    PredictionHistoryResponse,
+    BatchPredictionRequest,
+    BatchPredictionResponse,
+)
 from .common import (
     PaginationParams,
     PaginatedResponse,
@@ -73,6 +84,16 @@ __all__ = [
     "SimulationJobUpdate",
     "SimulationJobResponse",
     "SimulationResultResponse",
+    # ML
+    "PropertyPredictionRequest",
+    "PropertyPredictionResponse",
+    "ModelInfoResponse",
+    "ModelsListResponse",
+    "PropertyComparisonRequest",
+    "PropertyComparisonResponse",
+    "PredictionHistoryResponse",
+    "BatchPredictionRequest",
+    "BatchPredictionResponse",
     # Common
     "PaginationParams",
     "PaginatedResponse",
