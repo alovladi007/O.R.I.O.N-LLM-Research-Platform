@@ -1,10 +1,12 @@
 # ORION Platform
 
+> **Status**: Production-ready unified platform. All features have been merged into the main branch.
+
 <div align="center">
   <img src="docs/images/orion-logo.png" alt="ORION Logo" width="400">
-  
+
   <h1>ORION: AI-Driven Materials Science Platform</h1>
-  
+
   <p>
     <strong>Accelerating materials discovery through artificial intelligence</strong>
   </p>
