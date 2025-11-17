@@ -42,6 +42,12 @@ from .experiment import (
     InstrumentStatus,
     ExperimentStatus,
 )
+from .orchestrator import (
+    OrchestratorState,
+    OrchestratorRun,
+    AgentCommand,
+    OrchestratorMode,
+)
 
 __all__ = [
     "User",
@@ -72,4 +78,8 @@ __all__ = [
     "ExperimentRun",
     "InstrumentStatus",
     "ExperimentStatus",
+    "OrchestratorState",
+    "OrchestratorRun",
+    "AgentCommand",
+    "OrchestratorMode",
 ]

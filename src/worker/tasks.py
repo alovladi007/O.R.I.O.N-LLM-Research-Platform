@@ -802,3 +802,77 @@ def cancel_job(self, job_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Failed to cancel job {job_id}: {e}", exc_info=True)
         raise
+
+
+@celery_app.task(
+    name="run_orchestrator_step_task",
+    base=DatabaseTask,
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def run_orchestrator_step_task(
+    self,
+    orchestrator_id: str,
+    triggered_by: str = "scheduler",
+    trigger_context: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Execute one orchestrator step.
+
+    This task runs the orchestrator logic that:
+    - Advances design campaigns
+    - Schedules simulations and experiments
+    - Triggers model retraining when needed
+
+    Args:
+        orchestrator_id: UUID of the orchestrator state
+        triggered_by: Who/what triggered this run (scheduler, manual, api, agent)
+        trigger_context: Additional context about the trigger
+
+    Returns:
+        Dictionary with orchestrator run results
+    """
+    from backend.orchestrator import run_orchestrator_step
+
+    logger.info(f"Running orchestrator step (triggered by: {triggered_by})")
+
+    try:
+        # Run orchestrator step synchronously with async DB operations
+        async def run_step_async():
+            async with self.get_db_session() as db:
+                run = run_orchestrator_step(
+                    db=db,
+                    orchestrator_id=uuid.UUID(orchestrator_id),
+                    triggered_by=triggered_by,
+                    trigger_context=trigger_context
+                )
+                return run
+
+        run = asyncio.run(run_step_async())
+
+        logger.info(
+            f"Orchestrator step completed: "
+            f"campaigns_advanced={len(run.actions.get('campaigns_advanced', []))}, "
+            f"simulations_launched={run.actions.get('simulations_launched', 0)}, "
+            f"experiments_launched={run.actions.get('experiments_launched', 0)}"
+        )
+
+        return {
+            "orchestrator_id": orchestrator_id,
+            "run_id": str(run.id),
+            "success": run.success,
+            "actions": run.actions,
+            "duration_seconds": run.duration_seconds,
+        }
+
+    except Exception as e:
+        logger.error(f"Orchestrator step failed: {e}", exc_info=True)
+
+        # Retry on failure
+        if self.request.retries < self.max_retries:
+            retry_delay = self.default_retry_delay * (self.request.retries + 1)
+            logger.info(f"Retrying orchestrator step in {retry_delay}s")
+            raise self.retry(exc=e, countdown=retry_delay)
+        else:
+            raise
