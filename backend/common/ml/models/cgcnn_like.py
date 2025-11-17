@@ -16,6 +16,7 @@ Reference:
   Accurate and Interpretable Prediction of Material Properties", PRL 2018
 
 Session 15: GNN Model Integration
+Session 20: Active Learning - Uncertainty Estimation
 """
 
 import logging
@@ -23,6 +24,7 @@ from typing import Dict, List, Any, Optional, Tuple
 import json
 import os
 from pathlib import Path
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +149,55 @@ class CGCNNModel:
         else:
             return self._predict_stub(graph_repr)
 
+    def predict_with_uncertainty(
+        self,
+        graph_repr: Dict[str, Any],
+        method: str = "mc_dropout",
+        n_samples: int = 20
+    ) -> Dict[str, Any]:
+        """
+        Predict with uncertainty estimation using MC dropout or ensemble.
+
+        Args:
+            graph_repr: Graph representation from features.py
+            method: Uncertainty estimation method:
+                - "mc_dropout": Monte Carlo dropout
+                - "ensemble": Ensemble of models (if available)
+                - "none": Single forward pass (no uncertainty)
+            n_samples: Number of forward passes for MC dropout
+
+        Returns:
+            Dictionary with predictions and uncertainty:
+            {
+                "prediction": float,  # Mean prediction
+                "uncertainty": float,  # Standard deviation
+                "predictions_sample": List[float],  # All sampled predictions
+                "method": str,
+                "model_name": str,
+                "model_version": str
+            }
+
+        Example:
+            >>> model = CGCNNModel(model_name="cgcnn_bandgap_v1")
+            >>> result = model.predict_with_uncertainty(graph_repr, method="mc_dropout", n_samples=20)
+            >>> print(f"Prediction: {result['prediction']:.2f} ± {result['uncertainty']:.2f}")
+        """
+        if PYTORCH_AVAILABLE:
+            if method == "mc_dropout":
+                return self._predict_mc_dropout(graph_repr, n_samples)
+            elif method == "ensemble":
+                # Placeholder for ensemble methods
+                logger.warning("Ensemble method not fully implemented, using MC dropout")
+                return self._predict_mc_dropout(graph_repr, n_samples)
+            else:
+                # Single prediction with no uncertainty
+                result = self._predict_pytorch(graph_repr)
+                result["predictions_sample"] = [result["prediction"]]
+                result["method"] = "single"
+                return result
+        else:
+            return self._predict_stub_with_uncertainty(graph_repr)
+
     def _predict_pytorch(self, graph_repr: Dict[str, Any]) -> Dict[str, Any]:
         """PyTorch-based prediction."""
         # Convert graph_repr to PyTorch tensors
@@ -191,6 +242,85 @@ class CGCNNModel:
         return {
             "prediction": prediction,
             "uncertainty": 0.5,  # High uncertainty for stub
+            "model_name": f"{self.model_name}_stub",
+            "model_version": "0.1.0"
+        }
+
+    def _predict_mc_dropout(self, graph_repr: Dict[str, Any], n_samples: int = 20) -> Dict[str, Any]:
+        """
+        Monte Carlo dropout uncertainty estimation.
+
+        Performs multiple forward passes with dropout enabled to estimate
+        prediction uncertainty.
+
+        Args:
+            graph_repr: Graph representation
+            n_samples: Number of MC samples
+
+        Returns:
+            Prediction with uncertainty
+        """
+        # Convert graph to tensors
+        graph_data = self._graph_to_tensors(graph_repr)
+
+        predictions = []
+
+        # Enable dropout for MC sampling
+        self._model.train()  # Enable dropout
+
+        with torch.no_grad():
+            for _ in range(n_samples):
+                output = self._model(
+                    graph_data["atom_features"],
+                    graph_data["edge_index"],
+                    graph_data["edge_attr"]
+                )
+                predictions.append(output.item())
+
+        # Return to eval mode
+        self._model.eval()
+
+        # Compute statistics
+        predictions = np.array(predictions)
+        mean_pred = float(np.mean(predictions))
+        std_pred = float(np.std(predictions))
+
+        logger.debug(
+            f"MC Dropout ({n_samples} samples): "
+            f"prediction={mean_pred:.3f}, uncertainty={std_pred:.3f}"
+        )
+
+        return {
+            "prediction": mean_pred,
+            "uncertainty": std_pred,
+            "predictions_sample": predictions.tolist(),
+            "method": "mc_dropout",
+            "n_samples": n_samples,
+            "model_name": self.model_name,
+            "model_version": "1.0.0"
+        }
+
+    def _predict_stub_with_uncertainty(self, graph_repr: Dict[str, Any]) -> Dict[str, Any]:
+        """Stub prediction with simulated uncertainty."""
+        base_pred = self._predict_stub(graph_repr)
+
+        # Simulate MC dropout by adding noise
+        predictions = []
+        base_value = base_pred["prediction"]
+
+        for _ in range(20):
+            # Add random noise to simulate uncertainty
+            noise = np.random.normal(0, 0.1 * abs(base_value) + 0.05)
+            predictions.append(base_value + noise)
+
+        predictions = np.array(predictions)
+
+        return {
+            "prediction": float(np.mean(predictions)),
+            "uncertainty": float(np.std(predictions)),
+            "predictions_sample": predictions.tolist(),
+            "method": "mc_dropout_stub",
+            "n_samples": 20,
             "model_name": f"{self.model_name}_stub",
             "model_version": "0.1.0"
         }
@@ -262,13 +392,15 @@ if PYTORCH_AVAILABLE:
             atom_feature_dim: int = 4,
             hidden_dim: int = 128,
             num_layers: int = 3,
-            output_dim: int = 1
+            output_dim: int = 1,
+            dropout: float = 0.1
         ):
             super().__init__()
 
             self.atom_feature_dim = atom_feature_dim
             self.hidden_dim = hidden_dim
             self.num_layers = num_layers
+            self.dropout = dropout
 
             # Atom embedding
             self.atom_embedding = nn.Linear(atom_feature_dim, hidden_dim)
@@ -279,10 +411,17 @@ if PYTORCH_AVAILABLE:
                 for _ in range(num_layers)
             ])
 
-            # Output MLP
+            # Dropout layers for uncertainty estimation
+            self.dropout_layers = nn.ModuleList([
+                nn.Dropout(dropout)
+                for _ in range(num_layers)
+            ])
+
+            # Output MLP with dropout
             self.output_mlp = nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim // 2),
                 nn.ReLU(),
+                nn.Dropout(dropout),
                 nn.Linear(hidden_dim // 2, output_dim)
             )
 
@@ -308,7 +447,7 @@ if PYTORCH_AVAILABLE:
             h = F.relu(h)
 
             # Graph convolutions (simplified message passing)
-            for conv in self.conv_layers:
+            for conv, dropout in zip(self.conv_layers, self.dropout_layers):
                 h_new = h.clone()
 
                 # For each edge, pass messages
@@ -324,6 +463,7 @@ if PYTORCH_AVAILABLE:
                         h_new[i] = h_new[i] + conv(message)
 
                 h = F.relu(h_new)
+                h = dropout(h)  # Apply dropout for uncertainty estimation
 
             # Global pooling (mean over atoms)
             graph_feature = torch.mean(h, dim=0)  # [hidden_dim]

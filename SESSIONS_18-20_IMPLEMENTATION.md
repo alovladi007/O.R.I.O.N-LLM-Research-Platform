@@ -1,7 +1,7 @@
 # NANO-OS Sessions 18-20: Advanced ML & Hybrid Workflows
 
 **Implementation Date**: 2025-11-17
-**Status**: 🚧 **IN PROGRESS**
+**Status**: ✅ **CORE MODULES COMPLETE** (API integration pending)
 
 ---
 
@@ -266,13 +266,13 @@ Supports:
 
 ---
 
-## Session 19: Bayesian Optimization for Materials Design ⚠️
+## Session 19: Bayesian Optimization for Materials Design ✅
 
 ### Goals
 
 Implement Bayesian Optimization (BO) for intelligent materials discovery within the existing DesignCampaign framework.
 
-### Deliverables (Planned)
+### Deliverables
 
 #### 1. BO Module (`backend/common/ml/bo.py`)
 
@@ -412,21 +412,34 @@ GET /api/design/campaigns/{id}/trajectory
 # - Pareto frontier (for multi-objective)
 ```
 
-**Implementation Status**: ⚠️ **NOT YET STARTED**
+**Implementation Status**: ✅ **IMPLEMENTED**
+- ✅ BO module with GP surrogate (SimpleGP)
+- ✅ Acquisition functions (EI, UCB, POI)
+- ✅ Parameter space handling
+- ✅ Candidate suggestion with BO
+- ✅ Pareto front computation for multi-objective
+- ⚠️ API endpoints (pending)
+- ⚠️ DesignCampaign integration (campaign model already supports BO strategy)
+
+**Notes**:
+- Uses simplified Gaussian Process implementation (good for small datasets)
+- For production with large datasets, consider GPyTorch or BoTorch
+- Gracefully falls back to random sampling when scipy unavailable
+- Multi-start optimization for acquisition function maximization
 
 ---
 
-## Session 20: Active Learning for Smart Simulation Selection ⚠️
+## Session 20: Active Learning for Smart Simulation Selection ✅
 
 ### Goals
 
 Add uncertainty estimation to ML models and implement active learning to intelligently select which candidates deserve expensive DFT/MD simulations.
 
-### Deliverables (Planned)
+### Deliverables
 
-#### 1. Uncertainty Estimation in GNN Models
+#### 1. Uncertainty Estimation in GNN Models ✅
 
-**Extend `backend/common/ml/models/cgcnn_like.py`**:
+**Extended `backend/common/ml/models/cgcnn_like.py`**:
 
 ```python
 class CGCNNModel:
@@ -485,7 +498,7 @@ def _predict_ensemble(self, graph_repr, model_names):
     }
 ```
 
-#### 2. Active Learning Module (`backend/common/ml/active_learning.py`)
+#### 2. Active Learning Module (`backend/common/ml/active_learning.py`) ✅
 
 **Selection Strategies**:
 
@@ -703,7 +716,32 @@ async def check_and_retrain(db: AsyncSession):
         )
 ```
 
-**Implementation Status**: ⚠️ **NOT YET STARTED**
+**Implementation Status**: ✅ **IMPLEMENTED**
+- ✅ GNN uncertainty estimation via MC dropout
+- ✅ Dropout layers added to CGCNN model
+- ✅ Active learning module with multiple selection strategies
+- ✅ Candidate classification by confidence
+- ✅ Simulation budget tracking
+- ✅ API schemas for uncertainty prediction and candidate selection
+- ⚠️ API endpoints implementation (pending)
+- ⚠️ Retraining triggers (pending)
+- ⚠️ DesignCampaign integration (campaign model ready)
+
+**Implemented Features**:
+- **MC Dropout**: Multiple forward passes with dropout to estimate uncertainty
+- **Selection Strategies**:
+  - `uncertainty`: Pure uncertainty sampling
+  - `greedy_uncertainty`: Balance value and uncertainty
+  - `expected_improvement`: BO-style expected improvement
+- **Confidence Classification**: Automatic classification into high/low confidence
+- **Budget Management**: SimulationBudget class for tracking usage
+- **Dataset Quality Analysis**: Estimate model confidence from uncertainties
+- **Information Gain Tracking**: Measure uncertainty reduction from simulations
+
+**Notes**:
+- MC dropout requires model trained with dropout layers (dropout=0.1)
+- Ensemble method placeholder (can be extended with multiple model ensembles)
+- Stub implementation provides simulated uncertainty for testing
 
 ---
 
@@ -713,26 +751,35 @@ async def check_and_retrain(db: AsyncSession):
 New/Modified Files:
 ===================
 
-Session 18:
+Session 18 (✅ Completed):
   src/api/models/ml_potential.py           (NEW, ~160 lines)
-  src/api/models/__init__.py               (MODIFIED: add MLPotential)
+  src/api/models/__init__.py               (MODIFIED: +2 lines, add MLPotential)
   backend/common/ml/potentials.py          (NEW, ~700 lines)
   backend/common/engines/lammps.py         (MODIFIED: +150 lines for ML potentials)
 
-Session 19 (Planned):
-  backend/common/ml/bo.py                  (NEW, ~500 lines)
-  src/api/models/campaign.py               (MODIFIED: extend DesignCampaign)
-  src/api/routes/design.py                 (MODIFIED: add BO endpoints)
-  src/worker/tasks/design_tasks.py         (MODIFIED: BO iteration logic)
+Session 19 (✅ Completed):
+  backend/common/ml/bo.py                  (NEW, ~650 lines)
+  src/api/models/campaign.py               (OK: already supports BO via config.strategy)
+  src/api/routes/design.py                 (PENDING: add BO endpoints)
+  src/worker/tasks/design_tasks.py         (PENDING: BO iteration logic)
 
-Session 20 (Planned):
-  backend/common/ml/active_learning.py     (NEW, ~400 lines)
-  backend/common/ml/models/cgcnn_like.py   (MODIFIED: add uncertainty methods)
-  src/api/models/campaign.py               (MODIFIED: AL tracking fields)
-  src/api/routes/ml.py                     (MODIFIED: uncertainty in GNN endpoint)
+Session 20 (✅ Completed):
+  backend/common/ml/active_learning.py     (NEW, ~450 lines)
+  backend/common/ml/models/cgcnn_like.py   (MODIFIED: +130 lines, uncertainty methods + dropout)
+  src/api/schemas/ml.py                    (MODIFIED: +230 lines, AL schemas)
+  src/api/models/campaign.py               (OK: supports AL via metadata)
+  src/api/routes/ml.py                     (PENDING: uncertainty endpoints)
 
 Documentation:
-  SESSIONS_18-20_IMPLEMENTATION.md         (NEW, this file)
+  SESSIONS_18-20_IMPLEMENTATION.md         (UPDATED, this file, ~1100 lines)
+```
+
+**Total New/Modified Lines**:
+- Session 18: ~1,012 lines
+- Session 19: ~650 lines
+- Session 20: ~810 lines
+- Documentation: ~1,100 lines
+- **Grand Total: ~3,572 lines**
 ```
 
 ---
@@ -999,22 +1046,43 @@ This creates a closed loop:
 ```
 
 **Current Completion**:
-- Session 18 Core: **70%** ✅
-- Session 18 Integration: **20%** ⚠️
-- Session 19: **0%** ⚠️
-- Session 20: **0%** ⚠️
+- Session 18 Core: **100%** ✅
+- Session 18 Integration: **30%** ⚠️
+- Session 19 Core: **100%** ✅
+- Session 19 Integration: **20%** ⚠️
+- Session 20 Core: **100%** ✅
+- Session 20 Integration: **30%** ⚠️
 
-**Total New Code**: ~1,000 lines (Session 18 so far)
+**Total New Code**: ~3,572 lines (all core modules implemented)
 
 ---
 
 **Next Steps**:
-1. Complete Session 18:
-   - Hybrid workflow orchestration
-   - API endpoints for ML potentials
-   - Worker tasks for training
-   - Database migration
-2. Implement Session 19 BO module
-3. Implement Session 20 Active Learning
-4. End-to-end testing of autonomous discovery loop
-5. Frontend components for all three sessions
+1. Complete API Endpoint Integration:
+   - ML potential management endpoints (Session 18)
+   - BO campaign endpoints (Session 19)
+   - Uncertainty prediction endpoints (Session 20)
+   - Active learning selection endpoints (Session 20)
+2. Complete Worker Task Integration:
+   - Hybrid DFT→ML-MD workflow orchestration
+   - BO iteration execution
+   - Active learning candidate selection
+   - Automatic model retraining triggers
+3. Database Migration:
+   - Create migration for MLPotential table
+   - Add indexes for performance
+4. End-to-end Testing:
+   - Test hybrid workflow (DFT → Train ML potential → MD)
+   - Test BO-driven design campaign
+   - Test active learning selection
+   - Test full autonomous discovery loop
+5. Frontend Components:
+   - ML potential management UI
+   - BO campaign creation and trajectory visualization
+   - Active learning candidate review UI
+   - Uncertainty visualization
+6. Production Integration:
+   - Replace stub ML potential training with real trainers (FitSNAP, NequIP, etc.)
+   - Optimize GP training for larger datasets (consider GPyTorch/BoTorch)
+   - Calibrate uncertainty estimates
+   - Add ensemble methods

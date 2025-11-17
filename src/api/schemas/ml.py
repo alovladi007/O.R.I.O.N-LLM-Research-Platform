@@ -675,3 +675,236 @@ class ModelRegistryResponse(BaseModel):
                 "updated_at": "2025-11-16T12:00:00Z"
             }
         }
+
+
+# ============================================================================
+# Session 20: Active Learning Schemas
+# ============================================================================
+
+class UncertaintyPredictionRequest(BaseModel):
+    """
+    Request schema for predictions with uncertainty estimation.
+
+    Used for active learning to get both predictions and uncertainty estimates.
+    """
+    structure_id: uuid.UUID = Field(
+        ...,
+        description="ID of the structure to predict properties for"
+    )
+    gnn_model_name: str = Field(
+        default="cgcnn_bandgap_v1",
+        description="Name of GNN model to use"
+    )
+    uncertainty_method: str = Field(
+        default="mc_dropout",
+        description="Uncertainty estimation method (mc_dropout, ensemble, none)"
+    )
+    n_samples: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Number of forward passes for uncertainty estimation"
+    )
+    use_cached_features: bool = Field(
+        default=True,
+        description="Use cached features if available"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "structure_id": "123e4567-e89b-12d3-a456-426614174000",
+                "gnn_model_name": "cgcnn_bandgap_v1",
+                "uncertainty_method": "mc_dropout",
+                "n_samples": 20,
+                "use_cached_features": True
+            }
+        }
+
+
+class UncertaintyPredictionResponse(BaseModel):
+    """
+    Response schema for predictions with uncertainty.
+
+    Returns prediction, uncertainty estimate, and all sampled predictions.
+    """
+    structure_id: uuid.UUID = Field(..., description="ID of the structure")
+    gnn_model_name: str = Field(..., description="Name of GNN model used")
+    target_property: str = Field(..., description="Target property predicted")
+    prediction: float = Field(..., description="Mean predicted value")
+    uncertainty: float = Field(..., description="Prediction uncertainty (std)")
+    predictions_sample: List[float] = Field(
+        ...,
+        description="All sampled predictions (for MC dropout/ensemble)"
+    )
+    method: str = Field(..., description="Uncertainty estimation method used")
+    n_samples: int = Field(..., description="Number of samples used")
+    features_cached: bool = Field(..., description="Whether features were cached")
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Additional metadata"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "structure_id": "123e4567-e89b-12d3-a456-426614174000",
+                "gnn_model_name": "cgcnn_bandgap_v1",
+                "target_property": "bandgap",
+                "prediction": 2.45,
+                "uncertainty": 0.12,
+                "predictions_sample": [2.42, 2.47, 2.43, 2.46, 2.44],
+                "method": "mc_dropout",
+                "n_samples": 20,
+                "features_cached": True,
+                "metadata": {
+                    "inference_time_ms": 234.5
+                }
+            }
+        }
+
+
+class CandidateSelectionRequest(BaseModel):
+    """
+    Request schema for active learning candidate selection.
+
+    Given a list of candidates with predictions, select which ones
+    should be evaluated with expensive simulations.
+    """
+    candidate_structure_ids: List[uuid.UUID] = Field(
+        ...,
+        min_items=1,
+        description="List of candidate structure IDs to evaluate"
+    )
+    target_property: str = Field(
+        ...,
+        description="Target property to optimize (bandgap, formation_energy, etc.)"
+    )
+    selection_strategy: str = Field(
+        default="uncertainty",
+        description="Selection strategy (uncertainty, greedy_uncertainty, expected_improvement)"
+    )
+    max_simulations: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum number of candidates to select for simulation"
+    )
+    simulation_budget_fraction: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of candidates to simulate (0-1)"
+    )
+    uncertainty_threshold: float = Field(
+        default=0.1,
+        ge=0.0,
+        description="Uncertainty threshold for automatic selection"
+    )
+    high_value_threshold: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Value threshold for high-priority candidates"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "candidate_structure_ids": [
+                    "123e4567-e89b-12d3-a456-426614174000",
+                    "223e4567-e89b-12d3-a456-426614174000",
+                    "323e4567-e89b-12d3-a456-426614174000"
+                ],
+                "target_property": "bandgap",
+                "selection_strategy": "greedy_uncertainty",
+                "max_simulations": 10,
+                "simulation_budget_fraction": 0.2,
+                "uncertainty_threshold": 0.1,
+                "high_value_threshold": 0.8
+            }
+        }
+
+
+class SelectedCandidate(BaseModel):
+    """Schema for a candidate selected for simulation."""
+    structure_id: uuid.UUID = Field(..., description="Structure ID")
+    predicted_value: float = Field(..., description="ML predicted value")
+    uncertainty: float = Field(..., description="Prediction uncertainty")
+    acquisition_score: float = Field(..., description="Selection score")
+    selection_reason: str = Field(
+        ...,
+        description="Reason for selection (high_uncertainty, high_value, etc.)"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "structure_id": "123e4567-e89b-12d3-a456-426614174000",
+                "predicted_value": 2.45,
+                "uncertainty": 0.15,
+                "acquisition_score": 0.3675,
+                "selection_reason": "high_uncertainty"
+            }
+        }
+
+
+class CandidateSelectionResponse(BaseModel):
+    """
+    Response schema for active learning candidate selection.
+
+    Returns selected candidates and classification of all candidates
+    by confidence level.
+    """
+    selected_for_simulation: List[SelectedCandidate] = Field(
+        ...,
+        description="Candidates selected for expensive simulation"
+    )
+    trusted_predictions: List[uuid.UUID] = Field(
+        ...,
+        description="High-confidence candidates (trust ML prediction)"
+    )
+    total_candidates: int = Field(..., description="Total candidates evaluated")
+    num_selected: int = Field(..., description="Number selected for simulation")
+    num_trusted: int = Field(..., description="Number trusted (no simulation)")
+    selection_strategy: str = Field(..., description="Strategy used")
+    budget_info: Dict[str, Any] = Field(
+        ...,
+        description="Budget information (total, used, remaining)"
+    )
+    statistics: Dict[str, Any] = Field(
+        ...,
+        description="Selection statistics (mean uncertainty, etc.)"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "selected_for_simulation": [
+                    {
+                        "structure_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "predicted_value": 2.45,
+                        "uncertainty": 0.15,
+                        "acquisition_score": 0.3675,
+                        "selection_reason": "high_uncertainty"
+                    }
+                ],
+                "trusted_predictions": [
+                    "223e4567-e89b-12d3-a456-426614174000"
+                ],
+                "total_candidates": 10,
+                "num_selected": 3,
+                "num_trusted": 7,
+                "selection_strategy": "greedy_uncertainty",
+                "budget_info": {
+                    "total_budget": 10,
+                    "used": 3,
+                    "remaining": 7
+                },
+                "statistics": {
+                    "mean_uncertainty": 0.08,
+                    "max_uncertainty": 0.15,
+                    "mean_predicted_value": 2.3
+                }
+            }
+        }
