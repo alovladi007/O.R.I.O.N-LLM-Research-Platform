@@ -50,6 +50,8 @@ from .routers import (
     campaigns_router,
     mesoscale_router,
     continuum_router,
+    orchestrator_router,
+    agent_router,
 )
 from .exceptions import (
     ORIONAPIException,
@@ -250,6 +252,16 @@ def create_app() -> FastAPI:
         continuum_router,
         prefix=f"{settings.api_prefix}",
         tags=["continuum-simulations"]
+    )
+    app.include_router(
+        orchestrator_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["orchestrator"]
+    )
+    app.include_router(
+        agent_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["agent"]
     )
 
     # Add Prometheus metrics if enabled

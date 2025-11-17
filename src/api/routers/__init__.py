@@ -12,6 +12,8 @@ from .provenance import router as provenance_router
 from .campaigns import router as campaigns_router
 from .mesoscale import router as mesoscale_router
 from .continuum import router as continuum_router
+from .orchestrator import router as orchestrator_router
+from .agent import router as agent_router
 
 __all__ = [
     "health_router",
@@ -26,4 +28,6 @@ __all__ = [
     "campaigns_router",
     "mesoscale_router",
     "continuum_router",
+    "orchestrator_router",
+    "agent_router",
 ]

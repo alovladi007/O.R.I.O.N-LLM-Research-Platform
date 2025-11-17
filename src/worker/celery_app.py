@@ -84,6 +84,10 @@ celery_app.conf.update(
             "queue": "default",
             "routing_key": "task.update",
         },
+        "run_orchestrator_step_task": {
+            "queue": "default",
+            "routing_key": "task.orchestrator",
+        },
     },
 
     # Worker configuration
@@ -114,8 +118,14 @@ celery_app.conf.update(
     result_backend_always_retry=True,
     result_backend_max_retries=10,
 
-    # Beat schedule (for periodic tasks - future use)
+    # Beat schedule (for periodic tasks)
     beat_schedule={
+        # Run orchestrator every hour
+        "run-orchestrator-hourly": {
+            "task": "run_orchestrator_step_task",
+            "schedule": 3600.0,  # Every hour (in seconds)
+            "args": ("default", "scheduler"),
+        },
         # Example: Clean up old results every day
         # "cleanup-old-results": {
         #     "task": "src.worker.tasks.cleanup_old_results",
