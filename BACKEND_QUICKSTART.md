@@ -2,7 +2,24 @@
 
 ## 🚀 Start the Backend API
 
-### Option 1: Basic Development Server (Recommended for Testing Frontend)
+### Option 1: Quick Start with Mock Data (Recommended for Testing Frontend) ✅
+
+Start the simplified development server with mock data - no database required!
+
+```bash
+# From project root
+cd src/api
+../../venv/bin/python -m uvicorn app_dev:app --reload --host 0.0.0.0 --port 8000
+```
+
+**This option:**
+- ✅ Starts immediately - no setup needed
+- ✅ Returns mock data for all endpoints
+- ✅ Full CORS support for localhost:3000, localhost:3001
+- ✅ Perfect for frontend development and testing
+- ✅ No PostgreSQL, Redis, or other services needed
+
+### Option 2: Basic Development Server (With Production App)
 
 Start the FastAPI backend server with minimal dependencies:
 
@@ -12,7 +29,7 @@ cd src/api
 python -m uvicorn app:app --reload --port 8000
 ```
 
-**Note:** This will show connection errors for PostgreSQL, Redis, etc., but the API will still start and accept requests. The frontend can connect and test the UI.
+**Note:** This will show connection errors for PostgreSQL, Redis, etc., and may fail to start due to missing dependencies.
 
 ### Option 2: Full Stack with Docker (Production-like)
 
