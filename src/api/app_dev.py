@@ -118,12 +118,20 @@ async def get_structure(structure_id: str):
 async def get_design_stats():
     """Get design statistics with mock data"""
     return {
+        "total_structures": 10543,
+        "structures_with_predictions": 8932,
+        "coverage": {
+            "prediction_coverage": 0.847,
+            "property_coverage": {
+                "band_gap": 0.92,
+                "formation_energy": 0.88,
+                "stability_score": 0.76
+            }
+        },
         "total_designs": 1250,
         "successful_designs": 892,
         "avg_fitness": 0.78,
-        "best_fitness": 0.95,
-        "total_evaluations": 45000,
-        "avg_generation_time": 12.5
+        "best_fitness": 0.95
     }
 
 @app.post("/api/v1/design/search")
