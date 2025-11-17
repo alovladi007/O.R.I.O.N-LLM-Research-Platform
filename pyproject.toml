@@ -5,7 +5,6 @@ description = "ORION: Optimized Research & Innovation for Organized Nanomaterial
 authors = ["ORION Development Team"]
 license = "MIT"
 readme = "README.md"
-packages = [{include = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -122,14 +121,14 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.black]
 line-length = 100
-target-version = ['py39']
+target-version = ['py310', 'py311']
 
 [tool.isort]
 profile = "black"
 line_length = 100
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
