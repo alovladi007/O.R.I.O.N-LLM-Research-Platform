@@ -368,3 +368,310 @@ class BatchPredictionResponse(BaseModel):
                 "errors": None
             }
         }
+
+
+# ============================================================================
+# Session 14: Feature Extraction Schemas
+# ============================================================================
+
+class FeatureComputeRequest(BaseModel):
+    """Request schema for computing ML features for a structure."""
+    cutoff_radius: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=20.0,
+        description="Cutoff radius for neighbor search (Angstroms)"
+    )
+    force_recompute: bool = Field(
+        default=False,
+        description="Force recomputation even if cached features exist"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "cutoff_radius": 5.0,
+                "force_recompute": False
+            }
+        }
+
+
+class FeatureComputeResponse(BaseModel):
+    """Response schema for feature computation."""
+    id: uuid.UUID = Field(..., description="ID of the StructureFeatures record")
+    structure_id: uuid.UUID = Field(..., description="ID of the structure")
+    graph_repr: Dict[str, Any] = Field(..., description="Graph representation")
+    scalar_features: Dict[str, Any] = Field(..., description="Scalar features")
+    feature_version: str = Field(..., description="Version of feature extraction code")
+    cached: bool = Field(..., description="Whether features were cached")
+    created_at: datetime = Field(..., description="When features were computed")
+
+    class Config:
+        from_attributes = True
+        json_schema_extra = {
+            "example": {
+                "id": "323e4567-e89b-12d3-a456-426614174000",
+                "structure_id": "123e4567-e89b-12d3-a456-426614174000",
+                "graph_repr": {
+                    "num_atoms": 64,
+                    "num_edges": 256
+                },
+                "scalar_features": {
+                    "avg_electronegativity": 2.55,
+                    "density": 2.33
+                },
+                "feature_version": "1.0.0",
+                "cached": False,
+                "created_at": "2025-11-16T12:00:00Z"
+            }
+        }
+
+
+class BatchFeatureComputeRequest(BaseModel):
+    """Request schema for batch feature computation."""
+    structure_ids: List[uuid.UUID] = Field(
+        ...,
+        min_items=1,
+        max_items=100,
+        description="List of structure IDs to compute features for"
+    )
+    cutoff_radius: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=20.0,
+        description="Cutoff radius for neighbor search (Angstroms)"
+    )
+    force_recompute: bool = Field(
+        default=False,
+        description="Force recomputation even if cached features exist"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "structure_ids": [
+                    "123e4567-e89b-12d3-a456-426614174000",
+                    "223e4567-e89b-12d3-a456-426614174000"
+                ],
+                "cutoff_radius": 5.0,
+                "force_recompute": False
+            }
+        }
+
+
+class BatchFeatureComputeResponse(BaseModel):
+    """Response schema for batch feature computation."""
+    features: List[FeatureComputeResponse] = Field(
+        ...,
+        description="List of computed features for each structure"
+    )
+    total: int = Field(..., description="Total number of structures processed")
+    cached: int = Field(..., description="Number of cached results used")
+    new: int = Field(..., description="Number of newly computed features")
+    errors: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Errors for structures that failed"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "features": [],
+                "total": 2,
+                "cached": 1,
+                "new": 1,
+                "errors": None
+            }
+        }
+
+
+# ============================================================================
+# Session 15: GNN-Specific Inference Schemas
+# ============================================================================
+
+class GNNPredictionRequest(BaseModel):
+    """Request schema for GNN-based property prediction."""
+    structure_id: uuid.UUID = Field(
+        ...,
+        description="ID of the structure to predict properties for"
+    )
+    gnn_model_name: str = Field(
+        default="cgcnn_bandgap_v1",
+        description="Name of GNN model (cgcnn_bandgap_v1, cgcnn_formation_energy_v1)"
+    )
+    use_cached_features: bool = Field(
+        default=True,
+        description="Use cached features if available"
+    )
+    cutoff_radius: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=20.0,
+        description="Cutoff radius for graph construction (if features need to be computed)"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "structure_id": "123e4567-e89b-12d3-a456-426614174000",
+                "gnn_model_name": "cgcnn_bandgap_v1",
+                "use_cached_features": True,
+                "cutoff_radius": 5.0
+            }
+        }
+
+
+class GNNPredictionResponse(BaseModel):
+    """Response schema for GNN property prediction."""
+    structure_id: uuid.UUID = Field(..., description="ID of the structure")
+    gnn_model_name: str = Field(..., description="Name of GNN model used")
+    target_property: str = Field(..., description="Target property predicted")
+    prediction: float = Field(..., description="Predicted value")
+    uncertainty: Optional[float] = Field(None, description="Prediction uncertainty")
+    features_cached: bool = Field(..., description="Whether features were cached")
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Additional metadata (inference_time_ms, etc.)"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "structure_id": "123e4567-e89b-12d3-a456-426614174000",
+                "gnn_model_name": "cgcnn_bandgap_v1",
+                "target_property": "bandgap",
+                "prediction": 2.45,
+                "uncertainty": 0.12,
+                "features_cached": True,
+                "metadata": {
+                    "inference_time_ms": 45.3
+                }
+            }
+        }
+
+
+# ============================================================================
+# Session 16: Model Training & Registry Schemas
+# ============================================================================
+
+class TrainingRequest(BaseModel):
+    """Request schema for starting a model training job."""
+    target_property: str = Field(
+        ...,
+        description="Target property to train for (bandgap, formation_energy, etc.)"
+    )
+    model_type: str = Field(
+        default="CGCNN",
+        description="Model architecture type (CGCNN, ALIGNN, RandomForest)"
+    )
+    model_name: str = Field(
+        ...,
+        description="Name for the trained model (e.g., 'cgcnn_bandgap_v2')"
+    )
+    training_config: Dict[str, Any] = Field(
+        ...,
+        description="Training hyperparameters (epochs, batch_size, learning_rate, etc.)"
+    )
+    min_samples: int = Field(
+        default=100,
+        ge=10,
+        description="Minimum number of samples required for training"
+    )
+    train_fraction: float = Field(
+        default=0.8,
+        ge=0.5,
+        le=0.95,
+        description="Fraction of data to use for training (vs validation)"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "target_property": "bandgap",
+                "model_type": "CGCNN",
+                "model_name": "cgcnn_bandgap_v2",
+                "training_config": {
+                    "epochs": 100,
+                    "batch_size": 32,
+                    "learning_rate": 0.001,
+                    "hidden_dim": 128,
+                    "num_layers": 3
+                },
+                "min_samples": 100,
+                "train_fraction": 0.8
+            }
+        }
+
+
+class TrainingResponse(BaseModel):
+    """Response schema for training job submission."""
+    job_id: str = Field(..., description="ID of the training job (for tracking)")
+    status: str = Field(..., description="Job status (PENDING, RUNNING, COMPLETED, FAILED)")
+    message: str = Field(..., description="Status message")
+    model_name: str = Field(..., description="Name of model being trained")
+    estimated_time_minutes: Optional[int] = Field(
+        None,
+        description="Estimated training time in minutes"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "job_id": "train_123e4567",
+                "status": "PENDING",
+                "message": "Training job submitted successfully",
+                "model_name": "cgcnn_bandgap_v2",
+                "estimated_time_minutes": 30
+            }
+        }
+
+
+class ModelRegistryResponse(BaseModel):
+    """Response schema for model registry entry."""
+    id: uuid.UUID = Field(..., description="ID of the model registry entry")
+    name: str = Field(..., description="Unique model name")
+    version: str = Field(..., description="Model version")
+    target: str = Field(..., description="Target property")
+    description: Optional[str] = Field(None, description="Model description")
+    model_type: str = Field(..., description="Model architecture type")
+    checkpoint_path: str = Field(..., description="Path to model checkpoint")
+    training_config: Dict[str, Any] = Field(..., description="Training hyperparameters")
+    metrics: Dict[str, Any] = Field(..., description="Training metrics (MSE, MAE, R²)")
+    dataset_info: Optional[Dict[str, Any]] = Field(None, description="Dataset information")
+    is_active: bool = Field(..., description="Whether model is active")
+    is_system_provided: bool = Field(..., description="System vs user-trained")
+    created_at: datetime = Field(..., description="When model was created")
+    updated_at: datetime = Field(..., description="When model was last updated")
+
+    class Config:
+        from_attributes = True
+        json_schema_extra = {
+            "example": {
+                "id": "423e4567-e89b-12d3-a456-426614174000",
+                "name": "cgcnn_bandgap_v2",
+                "version": "2.0.0",
+                "target": "bandgap",
+                "description": "CGCNN model trained on 1000 structures",
+                "model_type": "CGCNN",
+                "checkpoint_path": "/models/cgcnn_bandgap_v2.pth",
+                "training_config": {
+                    "epochs": 100,
+                    "batch_size": 32,
+                    "learning_rate": 0.001
+                },
+                "metrics": {
+                    "train_mse": 0.023,
+                    "val_mse": 0.034,
+                    "val_mae": 0.145,
+                    "val_r2": 0.92
+                },
+                "dataset_info": {
+                    "num_train": 800,
+                    "num_val": 200
+                },
+                "is_active": True,
+                "is_system_provided": False,
+                "created_at": "2025-11-16T12:00:00Z",
+                "updated_at": "2025-11-16T12:00:00Z"
+            }
+        }

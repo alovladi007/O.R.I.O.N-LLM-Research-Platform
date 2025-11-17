@@ -24,7 +24,7 @@ import logging
 import uuid
 
 from ..database import get_db
-from ..models import User, Structure, PredictedProperties
+from ..models import User, Structure, PredictedProperties, StructureFeatures, MLModelRegistry
 from ..models.provenance import EntityType, EventType
 from ..schemas.ml import (
     PropertyPredictionRequest,
@@ -34,6 +34,18 @@ from ..schemas.ml import (
     PredictionHistoryResponse,
     BatchPredictionRequest,
     BatchPredictionResponse,
+    # Session 14: Feature extraction
+    FeatureComputeRequest,
+    FeatureComputeResponse,
+    BatchFeatureComputeRequest,
+    BatchFeatureComputeResponse,
+    # Session 15: GNN inference
+    GNNPredictionRequest,
+    GNNPredictionResponse,
+    # Session 16: Training & registry
+    TrainingRequest,
+    TrainingResponse,
+    ModelRegistryResponse,
 )
 from ..auth.security import get_current_active_user
 from ..exceptions import NotFoundError, ValidationError
@@ -41,6 +53,8 @@ from backend.common.ml import (
     predict_properties_for_structure,
     get_available_models,
 )
+from backend.common.ml.features import extract_structure_features
+from backend.common.ml.models.cgcnn_like import get_model, list_models
 from backend.common.provenance import (
     record_provenance,
     get_system_info,
@@ -606,3 +620,430 @@ async def delete_prediction(
     logger.info(f"Prediction {prediction_id} deleted")
 
     return None
+
+
+# ============================================================================
+# Session 14: Feature Extraction Endpoints
+# ============================================================================
+
+@router.post(
+    "/features/structure/{structure_id}",
+    response_model=FeatureComputeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Compute ML features for a structure",
+    description="""
+    Compute graph and scalar features for a structure.
+
+    This endpoint extracts ML-ready features from crystal structures:
+    - **Graph features**: Neighbor lists, bond distances, atom properties
+    - **Scalar features**: Composition, average properties, density
+
+    Features are cached in the database and reused for subsequent requests
+    unless `force_recompute=true`.
+
+    The extracted features can be used for:
+    - GNN model inference
+    - Dataset building for model training
+    - Structure analysis and visualization
+    """
+)
+async def compute_structure_features(
+    structure_id: uuid.UUID,
+    request: FeatureComputeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> FeatureComputeResponse:
+    """
+    Compute and cache ML features for a structure.
+    """
+    logger.info(
+        f"Feature computation requested for structure {structure_id}, "
+        f"cutoff={request.cutoff_radius}, force_recompute={request.force_recompute}"
+    )
+
+    # Verify structure exists
+    structure = await db.get(Structure, structure_id)
+    if not structure:
+        raise NotFoundError("Structure", structure_id)
+
+    # Check for cached features
+    cached_features = None
+    if not request.force_recompute:
+        query = select(StructureFeatures).where(
+            StructureFeatures.structure_id == structure_id
+        )
+        result = await db.execute(query)
+        cached_features = result.scalar_one_or_none()
+
+    # Return cached if available
+    if cached_features:
+        logger.info(f"Returning cached features {cached_features.id}")
+        return FeatureComputeResponse(
+            id=cached_features.id,
+            structure_id=cached_features.structure_id,
+            graph_repr=cached_features.graph_repr,
+            scalar_features=cached_features.scalar_features,
+            feature_version=cached_features.feature_version,
+            cached=True,
+            created_at=cached_features.created_at,
+        )
+
+    # Compute new features
+    logger.info(f"Computing new features for structure {structure_id}")
+    try:
+        graph_repr, scalar_features = extract_structure_features(
+            structure,
+            cutoff_radius=request.cutoff_radius
+        )
+    except Exception as e:
+        logger.error(f"Feature extraction failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Feature extraction failed: {str(e)}"
+        )
+
+    # Save to database
+    new_features = StructureFeatures(
+        structure_id=structure_id,
+        graph_repr=graph_repr,
+        scalar_features=scalar_features,
+        extraction_params={
+            "cutoff_radius": request.cutoff_radius
+        },
+        feature_version="1.0.0"
+    )
+
+    db.add(new_features)
+    await db.commit()
+    await db.refresh(new_features)
+
+    logger.info(f"Features saved with ID {new_features.id}")
+
+    return FeatureComputeResponse(
+        id=new_features.id,
+        structure_id=new_features.structure_id,
+        graph_repr=new_features.graph_repr,
+        scalar_features=new_features.scalar_features,
+        feature_version=new_features.feature_version,
+        cached=False,
+        created_at=new_features.created_at,
+    )
+
+
+@router.post(
+    "/features/batch",
+    response_model=BatchFeatureComputeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Batch compute ML features",
+    description="""
+    Compute features for multiple structures in a single request.
+
+    More efficient than individual requests when processing many structures.
+    Features are cached and reused unless `force_recompute=true`.
+
+    Returns successful features and errors separately.
+    """
+)
+async def batch_compute_features(
+    request: BatchFeatureComputeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> BatchFeatureComputeResponse:
+    """
+    Compute features for multiple structures.
+    """
+    logger.info(
+        f"Batch feature computation for {len(request.structure_ids)} structures"
+    )
+
+    features_list: List[FeatureComputeResponse] = []
+    errors: dict = {}
+    cached_count = 0
+    new_count = 0
+
+    for structure_id in request.structure_ids:
+        try:
+            single_request = FeatureComputeRequest(
+                cutoff_radius=request.cutoff_radius,
+                force_recompute=request.force_recompute,
+            )
+
+            feature_response = await compute_structure_features(
+                structure_id=structure_id,
+                request=single_request,
+                db=db,
+                current_user=current_user,
+            )
+
+            features_list.append(feature_response)
+
+            if feature_response.cached:
+                cached_count += 1
+            else:
+                new_count += 1
+
+        except NotFoundError as e:
+            logger.warning(f"Structure {structure_id} not found: {e}")
+            errors[str(structure_id)] = "Structure not found"
+
+        except Exception as e:
+            logger.error(f"Error computing features for {structure_id}: {e}")
+            errors[str(structure_id)] = str(e)
+
+    logger.info(
+        f"Batch feature computation complete: {len(features_list)} successful, "
+        f"{len(errors)} errors, {cached_count} cached, {new_count} new"
+    )
+
+    return BatchFeatureComputeResponse(
+        features=features_list,
+        total=len(features_list),
+        cached=cached_count,
+        new=new_count,
+        errors=errors if errors else None,
+    )
+
+
+# ============================================================================
+# Session 15: GNN Inference Endpoint
+# ============================================================================
+
+@router.post(
+    "/gnn/properties",
+    response_model=GNNPredictionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Predict properties using GNN models",
+    description="""
+    Predict material properties using Graph Neural Network models.
+
+    This endpoint uses the CGCNN-style GNN models from Session 15 to predict
+    properties directly from crystal structure graphs.
+
+    Available models:
+    - `cgcnn_bandgap_v1`: Predicts bandgap (eV)
+    - `cgcnn_formation_energy_v1`: Predicts formation energy (eV/atom)
+
+    The endpoint:
+    1. Extracts/retrieves features for the structure (cached if available)
+    2. Loads the specified GNN model from registry
+    3. Runs inference on the graph representation
+    4. Returns prediction with uncertainty estimate
+    """
+)
+async def predict_with_gnn(
+    request: GNNPredictionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> GNNPredictionResponse:
+    """
+    Predict properties using GNN models.
+    """
+    logger.info(
+        f"GNN prediction requested for structure {request.structure_id} "
+        f"using model {request.gnn_model_name}"
+    )
+
+    # Verify structure exists
+    structure = await db.get(Structure, request.structure_id)
+    if not structure:
+        raise NotFoundError("Structure", request.structure_id)
+
+    # Get or compute features
+    features_cached = False
+    if request.use_cached_features:
+        query = select(StructureFeatures).where(
+            StructureFeatures.structure_id == request.structure_id
+        )
+        result = await db.execute(query)
+        structure_features = result.scalar_one_or_none()
+
+        if structure_features:
+            graph_repr = structure_features.graph_repr
+            features_cached = True
+        else:
+            # Features not cached, compute them
+            graph_repr, _ = extract_structure_features(
+                structure,
+                cutoff_radius=request.cutoff_radius
+            )
+    else:
+        # Force recompute features
+        graph_repr, _ = extract_structure_features(
+            structure,
+            cutoff_radius=request.cutoff_radius
+        )
+
+    # Load GNN model
+    try:
+        gnn_model = get_model(request.gnn_model_name)
+        if gnn_model is None:
+            available_models = list_models()
+            raise ValidationError(
+                f"GNN model '{request.gnn_model_name}' not found. "
+                f"Available models: {', '.join(available_models)}"
+            )
+    except Exception as e:
+        logger.error(f"Failed to load GNN model: {e}")
+        raise ValidationError(f"Failed to load GNN model: {str(e)}")
+
+    # Run inference
+    try:
+        import time
+        start_time = time.time()
+
+        prediction_result = gnn_model.predict(graph_repr)
+
+        inference_time_ms = (time.time() - start_time) * 1000
+
+    except Exception as e:
+        logger.error(f"GNN inference failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"GNN inference failed: {str(e)}"
+        )
+
+    logger.info(
+        f"GNN prediction complete: {prediction_result['prediction']:.3f} "
+        f"(uncertainty: {prediction_result.get('uncertainty', 0.0):.3f})"
+    )
+
+    return GNNPredictionResponse(
+        structure_id=request.structure_id,
+        gnn_model_name=request.gnn_model_name,
+        target_property=gnn_model.target_property,
+        prediction=prediction_result["prediction"],
+        uncertainty=prediction_result.get("uncertainty"),
+        features_cached=features_cached,
+        metadata={
+            "inference_time_ms": inference_time_ms,
+            "model_info": prediction_result.get("model_info", {})
+        }
+    )
+
+
+# ============================================================================
+# Session 16: Model Registry & Training Endpoints
+# ============================================================================
+
+@router.get(
+    "/models/{model_id}",
+    response_model=ModelRegistryResponse,
+    summary="Get model registry details",
+    description="""
+    Get detailed information about a specific trained model from the registry.
+
+    Returns:
+    - Model metadata (name, version, type)
+    - Training configuration and hyperparameters
+    - Performance metrics (MSE, MAE, R²)
+    - Dataset information
+    - Checkpoint path
+    - Active status
+    """
+)
+async def get_model_registry_entry(
+    model_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> ModelRegistryResponse:
+    """
+    Get model registry entry by ID.
+    """
+    logger.debug(f"Fetching model registry entry {model_id}")
+
+    model_entry = await db.get(MLModelRegistry, model_id)
+    if not model_entry:
+        raise NotFoundError("MLModelRegistry", model_id)
+
+    return ModelRegistryResponse(
+        id=model_entry.id,
+        name=model_entry.name,
+        version=model_entry.version,
+        target=model_entry.target,
+        description=model_entry.description,
+        model_type=model_entry.model_type,
+        checkpoint_path=model_entry.checkpoint_path,
+        training_config=model_entry.training_config,
+        metrics=model_entry.metrics,
+        dataset_info=model_entry.dataset_info,
+        is_active=model_entry.is_active,
+        is_system_provided=model_entry.is_system_provided,
+        created_at=model_entry.created_at,
+        updated_at=model_entry.updated_at,
+    )
+
+
+@router.post(
+    "/train",
+    response_model=TrainingResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start model training job",
+    description="""
+    Submit a model training job for background processing.
+
+    This endpoint queues a training job that will:
+    1. Build a dataset from StructureFeatures + SimulationResults
+    2. Split into train/validation sets
+    3. Train the specified model architecture
+    4. Save checkpoint and register in MLModelRegistry
+
+    **Status**: Currently returns a stub response. Full training pipeline
+    implementation is pending (would be implemented in worker tasks).
+
+    The training job runs asynchronously in the background using Celery.
+    Use the returned `job_id` to track progress.
+    """
+)
+async def start_training_job(
+    request: TrainingRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> TrainingResponse:
+    """
+    Submit a model training job.
+
+    NOTE: This is currently a stub implementation. Full training pipeline
+    would be implemented as a Celery worker task.
+    """
+    logger.info(
+        f"Training job requested: {request.model_name} for {request.target_property}"
+    )
+
+    # Check if model name already exists
+    query = select(MLModelRegistry).where(
+        MLModelRegistry.name == request.model_name
+    )
+    result = await db.execute(query)
+    existing_model = result.scalar_one_or_none()
+
+    if existing_model and not current_user.is_admin:
+        from ..exceptions import AuthorizationError
+        raise AuthorizationError(
+            f"Model name '{request.model_name}' already exists. "
+            "Choose a different name or contact an admin."
+        )
+
+    # TODO: Implement actual training job submission
+    # This would typically:
+    # 1. Submit Celery task: train_cgcnn_model.delay(...)
+    # 2. Return job ID for tracking
+    # 3. Worker task handles training, checkpointing, and registry update
+
+    # For now, return stub response
+    job_id = f"train_{uuid.uuid4().hex[:12]}"
+
+    logger.warning(
+        "Training job submission is currently stubbed. "
+        "Full implementation requires worker task integration."
+    )
+
+    return TrainingResponse(
+        job_id=job_id,
+        status="PENDING",
+        message=(
+            "Training job submitted successfully. "
+            "NOTE: Full training pipeline not yet implemented - this is a stub response."
+        ),
+        model_name=request.model_name,
+        estimated_time_minutes=None,
+    )

@@ -413,22 +413,65 @@ def run_training_job(config: TrainingConfig):
     pass
 ```
 
-### With API Endpoints
+### With API Endpoints ✅
 
-Future API endpoints would include:
+**Status**: API endpoints implemented in `src/api/routers/ml.py`
+
+**Session 14 - Feature Extraction**:
+- ✅ `POST /api/ml/features/structure/{id}` - Compute features for a structure
+- ✅ `POST /api/ml/features/batch` - Batch feature computation
+
+**Session 15 - GNN Inference**:
+- ✅ `POST /api/ml/gnn/properties` - GNN inference endpoint
+- ✅ `GET /api/ml/models` - List available models (already existed)
+
+**Session 16 - Training & Registry**:
+- ✅ `POST /api/ml/train` - Start training job (stub implementation)
+- ✅ `GET /api/ml/models/{id}` - Get model registry details
+
+**Implementation Details**:
 ```python
-# Session 14
-POST /api/ml/features/structure/{id}  # Compute features
-POST /api/ml/features/batch            # Batch compute
+# Feature computation endpoint
+@router.post("/features/structure/{structure_id}")
+async def compute_structure_features(
+    structure_id: UUID,
+    request: FeatureComputeRequest,
+    db: AsyncSession,
+    current_user: User
+) -> FeatureComputeResponse:
+    # 1. Verify structure exists
+    # 2. Check for cached features (unless force_recompute)
+    # 3. Compute features using extract_structure_features()
+    # 4. Save to StructureFeatures table
+    # 5. Return response with cache status
 
-# Session 15
-POST /api/ml/gnn/properties            # GNN inference
-GET /api/ml/models                     # List models
+# GNN inference endpoint
+@router.post("/gnn/properties")
+async def predict_with_gnn(
+    request: GNNPredictionRequest,
+    db: AsyncSession,
+    current_user: User
+) -> GNNPredictionResponse:
+    # 1. Verify structure exists
+    # 2. Get or compute features (cached if available)
+    # 3. Load GNN model from registry
+    # 4. Run inference on graph representation
+    # 5. Return prediction with uncertainty
 
-# Session 16
-POST /api/ml/train                     # Start training
-GET /api/ml/models/{id}                # Get model details
+# Training job submission (stub)
+@router.post("/train")
+async def start_training_job(
+    request: TrainingRequest,
+    db: AsyncSession,
+    current_user: User
+) -> TrainingResponse:
+    # 1. Validate model name uniqueness
+    # 2. Submit training job (stub - would use Celery)
+    # 3. Return job ID for tracking
+    # NOTE: Full implementation pending worker task integration
 ```
+
+**Schemas**: All request/response schemas added to `src/api/schemas/ml.py`
 
 ---
 
@@ -569,15 +612,15 @@ Sessions 14-17 provide the **foundational infrastructure** for:
 2. **Model training and deployment** (dataset building, model registry)
 3. **Classical molecular dynamics** (LAMMPS integration)
 
-While the core components are implemented, full integration with the API, worker tasks, and frontend is left for future sessions or iterations.
+While the core components are implemented, full integration with worker tasks and frontend is left for future sessions or iterations.
 
 **Estimated Completion**:
 - Core Infrastructure: **100%** ✅
-- API Integration: **20%** ⚠️
+- API Integration: **80%** ✅ (endpoints implemented, worker integration pending)
 - Worker Integration: **10%** ⚠️
 - Frontend Integration: **5%** ⚠️
 
-**Total Lines of Code**: ~3,000 lines across 11 new/modified files
+**Total Lines of Code**: ~4,000 lines across 13 new/modified files
 
 ---
 
