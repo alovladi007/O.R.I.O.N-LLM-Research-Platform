@@ -9,6 +9,9 @@ from .jobs import router as jobs_router
 from .ml import router as ml_router
 from .design import router as design_router
 from .provenance import router as provenance_router
+from .campaigns import router as campaigns_router
+from .mesoscale import router as mesoscale_router
+from .continuum import router as continuum_router
 
 __all__ = [
     "health_router",
@@ -20,4 +23,7 @@ __all__ = [
     "ml_router",
     "design_router",
     "provenance_router",
+    "campaigns_router",
+    "mesoscale_router",
+    "continuum_router",
 ]

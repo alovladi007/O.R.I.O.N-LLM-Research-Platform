@@ -47,6 +47,9 @@ from .routers import (
     ml_router,
     design_router,
     provenance_router,
+    campaigns_router,
+    mesoscale_router,
+    continuum_router,
 )
 from .exceptions import (
     ORIONAPIException,
@@ -233,6 +236,21 @@ def create_app() -> FastAPI:
         prefix=f"{settings.api_prefix}",
         tags=["provenance"]
     )
+    app.include_router(
+        campaigns_router,
+        prefix=f"{settings.api_prefix}/campaigns",
+        tags=["campaigns"]
+    )
+    app.include_router(
+        mesoscale_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["mesoscale-simulations"]
+    )
+    app.include_router(
+        continuum_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["continuum-simulations"]
+    )
 
     # Add Prometheus metrics if enabled
     if settings.enable_metrics:
@@ -272,6 +290,9 @@ def create_app() -> FastAPI:
                 "ml": f"{settings.api_prefix}/ml",
                 "design": f"{settings.api_prefix}/design",
                 "provenance": f"{settings.api_prefix}/provenance",
+                "campaigns": f"{settings.api_prefix}/campaigns",
+                "mesoscale": f"{settings.api_prefix}/mesoscale",
+                "continuum": f"{settings.api_prefix}/continuum",
             },
         }
     

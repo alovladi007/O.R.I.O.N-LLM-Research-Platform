@@ -69,6 +69,19 @@ from .provenance import (
     ProvenanceSummaryResponse,
     TimelineEvent,
 )
+from .campaign import (
+    PropertyTarget,
+    CampaignConstraints,
+    CampaignConfig,
+    DesignCampaignCreate,
+    DesignCampaignUpdate,
+    DesignCampaignResponse,
+    DesignIterationResponse,
+    CampaignStepRequest,
+    CampaignStepResponse,
+    CampaignListResponse,
+    CampaignSummaryResponse,
+)
 
 __all__ = [
     # Auth
@@ -118,6 +131,18 @@ __all__ = [
     "ProvenanceTimelineResponse",
     "ProvenanceSummaryResponse",
     "TimelineEvent",
+    # Campaign
+    "PropertyTarget",
+    "CampaignConstraints",
+    "CampaignConfig",
+    "DesignCampaignCreate",
+    "DesignCampaignUpdate",
+    "DesignCampaignResponse",
+    "DesignIterationResponse",
+    "CampaignStepRequest",
+    "CampaignStepResponse",
+    "CampaignListResponse",
+    "CampaignSummaryResponse",
     # Common
     "PaginationParams",
     "PaginatedResponse",
