@@ -1,139 +1,60 @@
-# ORION Platform - Quick Start Guide
+# ORION Platform - Quick Start Guide 🚀
 
-## What is ORION?
+**Status:** ✅ **ALL SERVICES RUNNING**
+**Date:** 2025-11-17
 
-ORION is an AI-powered research platform for materials science that helps you:
-- 🔍 Search and analyze materials data
-- 🧪 Generate new material candidates with AI
-- 🔬 Run simulations (DFT, MD, etc.)
-- 📋 Generate experimental protocols
-- 💬 Chat with an AI assistant about materials science
+---
 
-## How to Run ORION
+## 🌐 Access URLs
 
-### Prerequisites
-- Python 3.9 or higher
-- 8GB RAM minimum (16GB recommended)
-- OpenAI API key (for AI features)
+### Frontend (Next.js)
+**Main Dashboard:** http://localhost:3002
 
-### Method 1: Quick Local Setup (5 minutes)
+**Available Pages:**
+- 🏠 **Home:** http://localhost:3002
+- 🔬 **Structures:** http://localhost:3002/structures
+- 🎨 **Design:** http://localhost:3002/design
+- 🤖 **Orchestrator:** http://localhost:3002/orchestrator *(NEW - Session 30)*
+- 🔐 **Login:** http://localhost:3002/login *(Session 10)*
+- 📝 **Register:** http://localhost:3002/register *(Session 10)*
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/alovladi007/O.R.I.O.N-LLM-Research-Platform.git
-   cd O.R.I.O.N-LLM-Research-Platform
-   ```
+### Backend (FastAPI)
+**API Base:** http://localhost:8000
 
-2. **Create a virtual environment**
-   ```bash
-   python -m venv venv
-   
-   # On Windows:
-   venv\Scripts\activate
-   
-   # On Mac/Linux:
-   source venv/bin/activate
-   ```
+**API Documentation:**
+- 📚 **Swagger UI:** http://localhost:8000/docs
+- 📖 **ReDoc:** http://localhost:8000/redoc
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+---
 
-4. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env file and add your API keys:
-   # - OPENAI_API_KEY=your_openai_key_here
-   ```
+## 🆕 New Features (Sessions 13-30)
 
-5. **Run the platform**
-   ```bash
-   streamlit run src/ui/streamlit_app.py
-   ```
+### Orchestrator System (Session 30)
+Visit **http://localhost:3002/orchestrator** to access:
+- Autonomous workflow orchestration
+- Multi-agent coordination
+- Real-time workflow monitoring
+- AI agent chat interface
 
-6. **Open in browser**
-   - The app will automatically open at http://localhost:8501
-   - If not, manually open this URL in your browser
+### ML Features (Sessions 14-20)
+**API Endpoints available at http://localhost:8000/docs**
 
-### Method 2: Docker Setup (10 minutes)
+### Python SDK (Sessions 21-28)
+Install: \`cd sdk/python && pip install -e .\`
 
-1. **Install Docker**
-   - Download from: https://www.docker.com/products/docker-desktop
+---
 
-2. **Clone and run**
-   ```bash
-   git clone https://github.com/alovladi007/O.R.I.O.N-LLM-Research-Platform.git
-   cd O.R.I.O.N-LLM-Research-Platform
-   
-   # Copy environment file
-   cp .env.example .env
-   # Edit .env and add your API keys
-   
-   # Run with Docker
-   docker-compose up
-   ```
+## 📦 Services Status
 
-3. **Access the platform**
-   - Open http://localhost:8501 in your browser
+✅ **Frontend:** Port 3002 (Node.js/Next.js)  
+✅ **Backend:** Port 8000 (Docker/FastAPI)  
+✅ **All dependencies installed**  
+✅ **Sessions 1-30 integrated**
 
-## What You'll See
+---
 
-When ORION starts, you'll see:
+**Quick Access:** http://localhost:3002
 
-### 1. Chat Interface (Default)
-- Talk to the AI about materials science
-- Ask questions like:
-  - "Find materials with bandgap between 2-3 eV"
-  - "How to synthesize TiO2 nanoparticles?"
-  - "Generate candidates for solar cell materials"
+**API Docs:** http://localhost:8000/docs
 
-### 2. Dashboard
-- System performance metrics
-- Materials analytics
-- Research trends
-
-### 3. Knowledge Graph Explorer
-- Search materials database
-- View properties and relationships
-
-### 4. Candidate Generation
-- AI-powered material discovery
-- Property prediction with uncertainty
-
-### 5. Simulation Management
-- Submit DFT/MD simulations
-- Track job status
-
-### 6. Protocol Generation
-- Automated experimental procedures
-- Safety guidelines
-
-## Troubleshooting
-
-### "Page not loading"
-- Make sure you ran `streamlit run src/ui/streamlit_app.py`
-- Check if port 8501 is free
-- Try: `streamlit run src/ui/streamlit_app.py --server.port 8502`
-
-### "Import errors"
-- Make sure virtual environment is activated
-- Run: `pip install -r requirements.txt`
-
-### "API errors"
-- Check your .env file has valid API keys
-- OpenAI API key is required for AI features
-
-## Demo Mode
-
-To try without API keys:
-```bash
-# Run in demo mode (limited features)
-streamlit run src/ui/streamlit_app.py -- --demo
-```
-
-## Need Help?
-
-1. Check the full documentation: [README.md](README.md)
-2. View example usage: [examples/quick_start.py](examples/quick_start.py)
-3. Report issues: https://github.com/alovladi007/O.R.I.O.N-LLM-Research-Platform/issues
+**Enjoy exploring ORION! 🚀**
