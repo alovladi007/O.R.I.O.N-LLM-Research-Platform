@@ -18,6 +18,8 @@ All models use:
 from .user import User
 from .material import Material
 from .structure import Structure
+from .structure_features import StructureFeatures
+from .ml_model_registry import MLModelRegistry
 from .workflow import WorkflowTemplate
 from .simulation import SimulationJob, SimulationResult
 from .embedding import VectorEmbedding
@@ -38,6 +40,8 @@ __all__ = [
     "User",
     "Material",
     "Structure",
+    "StructureFeatures",
+    "MLModelRegistry",
     "WorkflowTemplate",
     "SimulationJob",
     "SimulationResult",

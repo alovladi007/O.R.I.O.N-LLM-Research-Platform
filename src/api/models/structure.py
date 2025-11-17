@@ -105,6 +105,13 @@ class Structure(Base):
         comment="Lattice vectors and parameters"
     )
 
+    # Alternative representation for lattice vectors (used by feature extractor)
+    lattice_vectors: Mapped[Optional[List[List[float]]]] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="Lattice vectors as 3x3 matrix"
+    )
+
     # Atomic data: [{"species": "Mo", "position": [x, y, z], "charge": 0, ...}, ...]
     # Positions in fractional coordinates (0-1)
     atoms: Mapped[Optional[List[dict]]] = mapped_column(
@@ -160,6 +167,14 @@ class Structure(Base):
     simulation_jobs: Mapped[List["SimulationJob"]] = relationship(
         "SimulationJob",
         back_populates="structure",
+        cascade="all, delete-orphan"
+    )
+
+    # Session 14: ML features
+    features: Mapped[Optional["StructureFeatures"]] = relationship(
+        "StructureFeatures",
+        back_populates="structure",
+        uselist=False,  # One-to-one relationship
         cascade="all, delete-orphan"
     )
 

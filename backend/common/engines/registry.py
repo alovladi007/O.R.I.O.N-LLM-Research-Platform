@@ -26,6 +26,7 @@ import logging
 from backend.common.engines.base import SimulationEngine
 from backend.common.engines.mock import MockSimulationEngine
 from backend.common.engines.qe import QuantumEspressoEngine
+from backend.common.engines.lammps import LAMMPSEngine
 from backend.common.engines.mesoscale import PhaseFieldEngine, MonteCarloEngine
 from backend.common.engines.continuum import FEMEngine, FVMEngine
 
@@ -45,9 +46,9 @@ ENGINE_REGISTRY: Dict[str, Optional[Type[SimulationEngine]]] = {
     # VASP (placeholder for future implementation)
     "VASP": None,
 
-    # LAMMPS (placeholder for future implementation)
-    "LAMMPS": None,
-    "LAMMPS_MD": None,
+    # LAMMPS (Session 17)
+    "LAMMPS": LAMMPSEngine,
+    "LAMMPS_MD": LAMMPSEngine,
 
     # Gaussian (placeholder for future implementation)
     "GAUSSIAN": None,
