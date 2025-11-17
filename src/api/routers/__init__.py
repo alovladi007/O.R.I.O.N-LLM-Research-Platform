@@ -14,6 +14,13 @@ from .mesoscale import router as mesoscale_router
 from .continuum import router as continuum_router
 from .orchestrator import router as orchestrator_router
 from .agent import router as agent_router
+from .experiments import router as experiments_router
+from .photonics import router as photonics_router
+from .batteries import router as batteries_router
+from .quantum import router as quantum_router
+from .metamaterials import router as metamaterials_router
+from .pcm import router as pcm_router
+from .execution import router as execution_router
 
 __all__ = [
     "health_router",
@@ -30,4 +37,11 @@ __all__ = [
     "continuum_router",
     "orchestrator_router",
     "agent_router",
+    "experiments_router",
+    "photonics_router",
+    "batteries_router",
+    "quantum_router",
+    "metamaterials_router",
+    "pcm_router",
+    "execution_router",
 ]

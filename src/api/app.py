@@ -52,6 +52,13 @@ from .routers import (
     continuum_router,
     orchestrator_router,
     agent_router,
+    experiments_router,
+    photonics_router,
+    batteries_router,
+    quantum_router,
+    metamaterials_router,
+    pcm_router,
+    execution_router,
 )
 from .exceptions import (
     ORIONAPIException,
@@ -262,6 +269,41 @@ def create_app() -> FastAPI:
         agent_router,
         prefix=f"{settings.api_prefix}",
         tags=["agent"]
+    )
+    app.include_router(
+        experiments_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["experiments"]
+    )
+    app.include_router(
+        photonics_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["photonics"]
+    )
+    app.include_router(
+        batteries_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["batteries"]
+    )
+    app.include_router(
+        quantum_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["quantum"]
+    )
+    app.include_router(
+        metamaterials_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["metamaterials"]
+    )
+    app.include_router(
+        pcm_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["pcm"]
+    )
+    app.include_router(
+        execution_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["execution"]
     )
 
     # Add Prometheus metrics if enabled
