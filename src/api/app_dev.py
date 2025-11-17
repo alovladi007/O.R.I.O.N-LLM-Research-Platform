@@ -81,36 +81,147 @@ async def list_structures(skip: int = 0, limit: int = 20):
 
 @app.get("/api/v1/structures/{structure_id}")
 async def get_structure(structure_id: str):
-    """Get structure details with mock data"""
-    return {
-        "id": structure_id,
-        "formula": "Si",
-        "space_group": "Fd-3m",
-        "crystal_system": "cubic",
-        "lattice_params": {
-            "a": 5.43,
-            "b": 5.43,
-            "c": 5.43,
-            "alpha": 90.0,
-            "beta": 90.0,
-            "gamma": 90.0
-        },
-        "atoms": [
-            {"element": "Si", "position": [0.0, 0.0, 0.0]},
-            {"element": "Si", "position": [0.25, 0.25, 0.25]},
-            {"element": "Si", "position": [0.5, 0.5, 0.0]},
-            {"element": "Si", "position": [0.75, 0.75, 0.25]},
-            {"element": "Si", "position": [0.5, 0.0, 0.5]},
-            {"element": "Si", "position": [0.75, 0.25, 0.75]},
-            {"element": "Si", "position": [0.0, 0.5, 0.5]},
-            {"element": "Si", "position": [0.25, 0.75, 0.75]}
-        ],
-        "properties": {
+    """Get structure details with mock data - varies by ID"""
+    # Extract index from structure_id (e.g., "struct_0" -> 0)
+    try:
+        idx = int(structure_id.split('_')[-1]) if '_' in structure_id else 0
+    except:
+        idx = 0
+
+    # Different materials based on ID
+    materials = [
+        {
+            "formula": "Si",
+            "space_group": "Fd-3m",
+            "space_group_number": 227,
+            "crystal_system": "cubic",
+            "a": 5.43, "b": 5.43, "c": 5.43,
+            "alpha": 90.0, "beta": 90.0, "gamma": 90.0,
+            "atomic_positions": [
+                {"element": "Si", "position": [0.0, 0.0, 0.0]},
+                {"element": "Si", "position": [0.25, 0.25, 0.25]},
+                {"element": "Si", "position": [0.5, 0.5, 0.0]},
+                {"element": "Si", "position": [0.75, 0.75, 0.25]},
+                {"element": "Si", "position": [0.5, 0.0, 0.5]},
+                {"element": "Si", "position": [0.75, 0.25, 0.75]},
+                {"element": "Si", "position": [0.0, 0.5, 0.5]},
+                {"element": "Si", "position": [0.25, 0.75, 0.75]}
+            ],
             "band_gap": 1.12,
             "formation_energy": -5.42,
-            "magnetic_moment": 0.0,
-            "density": 2.33
+            "density": 2.33,
+            "volume": 160.19,
         },
+        {
+            "formula": "GaN",
+            "space_group": "P63mc",
+            "space_group_number": 186,
+            "crystal_system": "hexagonal",
+            "a": 3.19, "b": 3.19, "c": 5.19,
+            "alpha": 90.0, "beta": 90.0, "gamma": 120.0,
+            "atomic_positions": [
+                {"element": "Ga", "position": [0.333, 0.667, 0.0]},
+                {"element": "Ga", "position": [0.667, 0.333, 0.5]},
+                {"element": "N", "position": [0.333, 0.667, 0.377]},
+                {"element": "N", "position": [0.667, 0.333, 0.877]}
+            ],
+            "band_gap": 3.44,
+            "formation_energy": -1.15,
+            "density": 6.15,
+            "volume": 45.77,
+        },
+        {
+            "formula": "Fe2O3",
+            "space_group": "R-3c",
+            "space_group_number": 167,
+            "crystal_system": "trigonal",
+            "a": 5.035, "b": 5.035, "c": 13.75,
+            "alpha": 90.0, "beta": 90.0, "gamma": 120.0,
+            "atomic_positions": [
+                {"element": "Fe", "position": [0.0, 0.0, 0.355]},
+                {"element": "Fe", "position": [0.0, 0.0, 0.145]},
+                {"element": "Fe", "position": [0.333, 0.667, 0.022]},
+                {"element": "Fe", "position": [0.667, 0.333, 0.645]},
+                {"element": "O", "position": [0.306, 0.0, 0.25]},
+                {"element": "O", "position": [0.0, 0.306, 0.25]},
+                {"element": "O", "position": [0.694, 0.694, 0.25]},
+                {"element": "O", "position": [0.639, 0.333, 0.917]},
+                {"element": "O", "position": [0.333, 0.972, 0.917]},
+                {"element": "O", "position": [0.028, 0.667, 0.917]}
+            ],
+            "band_gap": 2.2,
+            "formation_energy": -8.26,
+            "density": 5.26,
+            "volume": 301.63,
+        },
+        {
+            "formula": "TiO2",
+            "space_group": "P42/mnm",
+            "space_group_number": 136,
+            "crystal_system": "tetragonal",
+            "a": 4.593, "b": 4.593, "c": 2.959,
+            "alpha": 90.0, "beta": 90.0, "gamma": 90.0,
+            "atomic_positions": [
+                {"element": "Ti", "position": [0.0, 0.0, 0.0]},
+                {"element": "Ti", "position": [0.5, 0.5, 0.5]},
+                {"element": "O", "position": [0.305, 0.305, 0.0]},
+                {"element": "O", "position": [0.695, 0.695, 0.0]},
+                {"element": "O", "position": [0.805, 0.195, 0.5]},
+                {"element": "O", "position": [0.195, 0.805, 0.5]}
+            ],
+            "band_gap": 3.2,
+            "formation_energy": -9.73,
+            "density": 4.23,
+            "volume": 62.43,
+        },
+        {
+            "formula": "Al2O3",
+            "space_group": "R-3c",
+            "space_group_number": 167,
+            "crystal_system": "trigonal",
+            "a": 4.759, "b": 4.759, "c": 12.99,
+            "alpha": 90.0, "beta": 90.0, "gamma": 120.0,
+            "atomic_positions": [
+                {"element": "Al", "position": [0.0, 0.0, 0.352]},
+                {"element": "Al", "position": [0.0, 0.0, 0.148]},
+                {"element": "Al", "position": [0.333, 0.667, 0.019]},
+                {"element": "Al", "position": [0.667, 0.333, 0.648]},
+                {"element": "O", "position": [0.306, 0.0, 0.25]},
+                {"element": "O", "position": [0.0, 0.306, 0.25]},
+                {"element": "O", "position": [0.694, 0.694, 0.25]},
+                {"element": "O", "position": [0.639, 0.333, 0.917]},
+                {"element": "O", "position": [0.333, 0.972, 0.917]},
+                {"element": "O", "position": [0.028, 0.667, 0.917]}
+            ],
+            "band_gap": 8.8,
+            "formation_energy": -16.83,
+            "density": 3.99,
+            "volume": 254.76,
+        },
+    ]
+
+    material = materials[idx % len(materials)]
+
+    return {
+        "id": structure_id,
+        "formula": material["formula"],
+        "space_group": material["space_group"],
+        "space_group_number": material["space_group_number"],
+        "crystal_system": material["crystal_system"],
+        "a": material["a"],
+        "b": material["b"],
+        "c": material["c"],
+        "alpha": material["alpha"],
+        "beta": material["beta"],
+        "gamma": material["gamma"],
+        "atomic_positions": material["atomic_positions"],
+        "num_atoms": len(material["atomic_positions"]),
+        "band_gap": material["band_gap"],
+        "formation_energy": material["formation_energy"],
+        "density": material["density"],
+        "volume": material["volume"],
+        "dimensionality": 3,
+        "tags": ["mock_data", "example"],
         "created_at": "2025-11-16T00:00:00Z"
     }
 
