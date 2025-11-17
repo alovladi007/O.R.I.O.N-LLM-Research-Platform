@@ -30,13 +30,6 @@ import {
   Twitter,
   PlayArrow,
 } from '@mui/icons-material'
-import { HeroSection } from '@/components/landing/HeroSection'
-import { FeaturesSection } from '@/components/landing/FeaturesSection'
-import { DemoSection } from '@/components/landing/DemoSection'
-import { TestimonialsSection } from '@/components/landing/TestimonialsSection'
-import { PricingSection } from '@/components/landing/PricingSection'
-import { CTASection } from '@/components/landing/CTASection'
-
 const features = [
   {
     icon: <Psychology sx={{ fontSize: 40 }} />,
@@ -308,17 +301,32 @@ export default function HomePage() {
         </Container>
       </Box>
 
-      {/* Demo Section */}
-      <DemoSection />
-
-      {/* Testimonials */}
-      <TestimonialsSection />
-
-      {/* Pricing */}
-      <PricingSection />
-
       {/* CTA Section */}
-      <CTASection />
+      <Box sx={{ py: 10, bgcolor: 'primary.main', color: 'white', textAlign: 'center' }}>
+        <Container maxWidth="md">
+          <Typography variant="h3" sx={{ mb: 2, fontWeight: 700 }}>
+            Ready to Transform Your Research?
+          </Typography>
+          <Typography variant="h6" sx={{ mb: 4, opacity: 0.9 }}>
+            Join thousands of researchers accelerating materials discovery with ORION
+          </Typography>
+          <Button
+            variant="contained"
+            size="large"
+            sx={{
+              bgcolor: 'white',
+              color: 'primary.main',
+              '&:hover': {
+                bgcolor: 'grey.100',
+              },
+            }}
+            endIcon={<ArrowForward />}
+            onClick={() => router.push('/signup')}
+          >
+            Get Started Today
+          </Button>
+        </Container>
+      </Box>
     </>
   )
 }
