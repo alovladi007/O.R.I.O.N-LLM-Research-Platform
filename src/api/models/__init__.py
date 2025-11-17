@@ -20,6 +20,7 @@ from .material import Material
 from .structure import Structure
 from .structure_features import StructureFeatures
 from .ml_model_registry import MLModelRegistry
+from .ml_potential import MLPotential
 from .workflow import WorkflowTemplate
 from .simulation import SimulationJob, SimulationResult
 from .embedding import VectorEmbedding
@@ -42,6 +43,7 @@ __all__ = [
     "Structure",
     "StructureFeatures",
     "MLModelRegistry",
+    "MLPotential",
     "WorkflowTemplate",
     "SimulationJob",
     "SimulationResult",

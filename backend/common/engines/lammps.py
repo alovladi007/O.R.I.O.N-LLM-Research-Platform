@@ -73,7 +73,7 @@ class LAMMPSEngine(SimulationEngine):
 
         Args:
             structure: Structure model object
-            parameters: MD parameters
+            parameters: MD parameters (can include ml_potential_id for ML potentials)
             work_dir: Working directory
 
         Returns:
@@ -94,6 +94,10 @@ class LAMMPSEngine(SimulationEngine):
         potential = parameters.get("potential", "tersoff")
         potential_file = parameters.get("potential_file")
 
+        # Session 18: ML potential support
+        ml_potential_id = parameters.get("ml_potential_id")
+        ml_potential_config = parameters.get("ml_potential_config")
+
         # Generate data file (LAMMPS structure format)
         data_file = input_dir / "structure.data"
         self._write_data_file(structure, data_file)
@@ -110,7 +114,8 @@ class LAMMPSEngine(SimulationEngine):
                 dump_interval,
                 thermo_interval,
                 potential,
-                potential_file
+                potential_file,
+                ml_potential_config
             )
         elif "NPT" in workflow_type:
             pressure = parameters.get("pressure", 1.0)  # atm
@@ -124,7 +129,8 @@ class LAMMPSEngine(SimulationEngine):
                 dump_interval,
                 thermo_interval,
                 potential,
-                potential_file
+                potential_file,
+                ml_potential_config
             )
         elif "ANNEAL" in workflow_type:
             temp_start = parameters.get("temp_start", 1000.0)
@@ -140,7 +146,8 @@ class LAMMPSEngine(SimulationEngine):
                 dump_interval,
                 thermo_interval,
                 potential,
-                potential_file
+                potential_file,
+                ml_potential_config
             )
         else:
             raise ValueError(f"Unknown workflow type: {workflow_type}")
@@ -212,7 +219,8 @@ class LAMMPSEngine(SimulationEngine):
         dump_interval: int,
         thermo_interval: int,
         potential: str,
-        potential_file: Optional[str]
+        potential_file: Optional[str],
+        ml_potential_config: Optional[Dict[str, Any]] = None
     ):
         """Write NVT input script."""
         with open(output_path, "w") as f:
@@ -226,7 +234,7 @@ class LAMMPSEngine(SimulationEngine):
             f.write(f"read_data {data_file}\n\n")
 
             # Potential
-            self._write_potential_section(f, potential, potential_file)
+            self._write_potential_section(f, potential, potential_file, ml_potential_config)
 
             # Initialization
             f.write(f"velocity all create {temperature} 12345 dist gaussian\n\n")
@@ -255,7 +263,8 @@ class LAMMPSEngine(SimulationEngine):
         dump_interval: int,
         thermo_interval: int,
         potential: str,
-        potential_file: Optional[str]
+        potential_file: Optional[str],
+        ml_potential_config: Optional[Dict[str, Any]] = None
     ):
         """Write NPT input script."""
         with open(output_path, "w") as f:
@@ -269,7 +278,7 @@ class LAMMPSEngine(SimulationEngine):
             f.write(f"read_data {data_file}\n\n")
 
             # Potential
-            self._write_potential_section(f, potential, potential_file)
+            self._write_potential_section(f, potential, potential_file, ml_potential_config)
 
             # Initialization
             f.write(f"velocity all create {temperature} 12345 dist gaussian\n\n")
@@ -298,7 +307,8 @@ class LAMMPSEngine(SimulationEngine):
         dump_interval: int,
         thermo_interval: int,
         potential: str,
-        potential_file: Optional[str]
+        potential_file: Optional[str],
+        ml_potential_config: Optional[Dict[str, Any]] = None
     ):
         """Write simulated annealing input script."""
         with open(output_path, "w") as f:
@@ -312,7 +322,7 @@ class LAMMPSEngine(SimulationEngine):
             f.write(f"read_data {data_file}\n\n")
 
             # Potential
-            self._write_potential_section(f, potential, potential_file)
+            self._write_potential_section(f, potential, potential_file, ml_potential_config)
 
             # Initialization
             f.write(f"velocity all create {temp_start} 12345 dist gaussian\n\n")
@@ -335,8 +345,24 @@ class LAMMPSEngine(SimulationEngine):
             f.write("unfix 1\n")
             f.write("minimize 1e-6 1e-8 1000 10000\n")
 
-    def _write_potential_section(self, f, potential: str, potential_file: Optional[str]):
-        """Write potential section of input script."""
+    def _write_potential_section(
+        self,
+        f,
+        potential: str,
+        potential_file: Optional[str],
+        ml_potential_config: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Write potential section of input script.
+
+        Session 18: Extended to support ML potentials (SNAP, NequIP, etc.)
+        """
+        # Session 18: ML potentials take precedence
+        if ml_potential_config:
+            self._write_ml_potential(f, ml_potential_config)
+            return
+
+        # Classical potentials
         if potential == "tersoff":
             pot_file = potential_file or "C.tersoff"
             f.write(f"pair_style tersoff\n")
@@ -351,6 +377,68 @@ class LAMMPSEngine(SimulationEngine):
             f.write(f"pair_coeff * * 1.0 1.0\n\n")
         else:
             logger.warning(f"Unknown potential: {potential}, using LJ")
+            f.write(f"pair_style lj/cut 10.0\n")
+            f.write(f"pair_coeff * * 1.0 1.0\n\n")
+
+    def _write_ml_potential(self, f, ml_config: Dict[str, Any]):
+        """
+        Write ML potential section.
+
+        Session 18: Supports SNAP, NequIP, MACE, and other ML potentials.
+
+        Args:
+            f: File handle
+            ml_config: ML potential configuration dict with keys:
+                - descriptor_type: "SNAP", "NequIP", "MACE", etc.
+                - files: Dict of potential file paths
+                - elements: List of elements
+                - params: Descriptor-specific parameters
+        """
+        descriptor_type = ml_config.get("descriptor_type", "SNAP")
+        elements = ml_config.get("elements", ["C"])
+        files = ml_config.get("files", {})
+        params = ml_config.get("params", {})
+
+        f.write(f"# ML Potential: {descriptor_type}\n")
+        f.write("# Trained from DFT data via NANO-OS\n\n")
+
+        if descriptor_type == "SNAP":
+            # LAMMPS SNAP potential
+            coeff_file = files.get("coefficients", "snap.coeffs")
+            param_file = files.get("parameters", "snap.param")
+
+            f.write(f"pair_style snap\n")
+            f.write(f"pair_coeff * * {param_file} {coeff_file} {' '.join(elements)}\n\n")
+
+        elif descriptor_type in ["NequIP", "MACE"]:
+            # Neural network potential (via LAMMPS pair_style mliap or pair_style nequip)
+            model_file = files.get("model", "model.pth")
+
+            # NOTE: Actual LAMMPS integration depends on whether LAMMPS was compiled
+            # with ML-IAP package or NequIP/MACE plugins
+            f.write(f"# NOTE: Requires LAMMPS compiled with ML-IAP or {descriptor_type} support\n")
+            f.write(f"pair_style mliap model {descriptor_type.lower()} {model_file}\n")
+            f.write(f"pair_coeff * * {' '.join(elements)}\n\n")
+
+        elif descriptor_type == "ACE":
+            # Atomic Cluster Expansion
+            potential_file = files.get("potential", "ace.yace")
+            f.write(f"pair_style pace\n")
+            f.write(f"pair_coeff * * {potential_file} {' '.join(elements)}\n\n")
+
+        elif descriptor_type == "GAP":
+            # Gaussian Approximation Potential (via QUIP)
+            xml_file = files.get("xml", "gap.xml")
+            f.write(f"# NOTE: Requires LAMMPS compiled with QUIP support\n")
+            f.write(f"pair_style quip\n")
+            f.write(f"pair_coeff * * {xml_file} \"Potential xml_label=GAP\" {' '.join(elements)}\n\n")
+
+        else:
+            # Generic ML potential (fallback)
+            logger.warning(f"Unknown ML potential type: {descriptor_type}, using stub")
+            f.write(f"# Stub ML potential (not yet implemented)\n")
+            f.write(f"# Type: {descriptor_type}\n")
+            f.write(f"# Elements: {' '.join(elements)}\n")
             f.write(f"pair_style lj/cut 10.0\n")
             f.write(f"pair_coeff * * 1.0 1.0\n\n")
 
