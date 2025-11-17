@@ -36,7 +36,9 @@ from .celery_app import celery_app
 from backend.common.engines import get_engine
 from backend.common.engines.mock import run_mock_simulation  # For backwards compatibility
 from src.api.models.simulation import SimulationJob, SimulationResult, JobStatus
+from src.api.models.provenance import EntityType, EventType
 from src.api.database import async_session_factory
+from backend.common.provenance import record_provenance, get_system_info, get_code_version
 
 logger = logging.getLogger(__name__)
 
@@ -422,6 +424,26 @@ def run_simulation_job(self, job_id: str) -> Dict[str, Any]:
             )
         )
 
+        # Record STARTED provenance event
+        async def record_started_event():
+            async with self.get_db_session() as db:
+                await record_provenance(
+                    db,
+                    EntityType.JOB,
+                    uuid.UUID(job_id),
+                    EventType.STARTED,
+                    details={
+                        "engine_name": job.engine,
+                        "worker_id": self.request.id,
+                        "host_info": get_system_info(),
+                        "code_version": get_code_version(),
+                        "started_at": started_at.isoformat(),
+                        "retry_count": self.request.retries,
+                    }
+                )
+
+        asyncio.run(record_started_event())
+
         # ===== STEP 3: Extract job data =====
         # Get structure data (with safe fallback if structure not loaded)
         structure_data = {}
@@ -586,6 +608,26 @@ def run_simulation_job(self, job_id: str) -> Dict[str, Any]:
             )
         )
 
+        # Record COMPLETED provenance event
+        async def record_completed_event():
+            async with self.get_db_session() as db:
+                await record_provenance(
+                    db,
+                    EntityType.JOB,
+                    uuid.UUID(job_id),
+                    EventType.COMPLETED,
+                    details={
+                        "duration_ms": duration * 1000,
+                        "result_summary": simulation_result.get("summary", {}),
+                        "finished_at": finished_at.isoformat(),
+                        "artifacts_path": artifacts_path,
+                        "convergence_reached": simulation_result.get("convergence_reached", True),
+                        "quality_score": simulation_result.get("quality_score"),
+                    }
+                )
+
+        asyncio.run(record_completed_event())
+
         logger.info(
             f"[Job {job_id}] Simulation completed successfully in {duration:.2f}s"
         )
@@ -620,6 +662,27 @@ def run_simulation_job(self, job_id: str) -> Dict[str, Any]:
                     retry_count=self.request.retries,
                 )
             )
+
+            # Record FAILED provenance event
+            async def record_failed_event():
+                async with self.get_db_session() as db:
+                    import traceback
+                    await record_provenance(
+                        db,
+                        EntityType.JOB,
+                        uuid.UUID(job_id),
+                        EventType.FAILED,
+                        details={
+                            "error_message": error_message,
+                            "traceback": traceback.format_exc(),
+                            "failed_at": finished_at.isoformat(),
+                            "duration_ms": duration * 1000,
+                            "retry_count": self.request.retries,
+                        }
+                    )
+
+            asyncio.run(record_failed_event())
+
         except Exception as update_error:
             logger.error(
                 f"[Job {job_id}] Failed to update job status to FAILED: {update_error}"

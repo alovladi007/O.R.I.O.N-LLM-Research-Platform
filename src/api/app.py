@@ -39,15 +39,14 @@ from .database import init_db, close_db
 from .cache import init_cache, close_cache
 from .routers import (
     auth_router,
-    users_router,
-    materials_router,
-    simulations_router,
-    experiments_router,
-    knowledge_router,
-    admin_router,
     health_router,
-    websocket_router,
+    materials_router,
+    structures_router,
+    workflows_router,
+    jobs_router,
     ml_router,
+    design_router,
+    provenance_router,
 )
 from .exceptions import (
     ORIONAPIException,
@@ -200,52 +199,41 @@ def create_app() -> FastAPI:
         tags=["authentication"]
     )
     app.include_router(
-        users_router,
-        prefix=f"{settings.api_prefix}/users",
-        tags=["users"]
-    )
-    app.include_router(
         materials_router,
         prefix=f"{settings.api_prefix}/materials",
         tags=["materials"]
     )
     app.include_router(
-        simulations_router,
-        prefix=f"{settings.api_prefix}/simulations",
-        tags=["simulations"]
+        structures_router,
+        prefix=f"{settings.api_prefix}/structures",
+        tags=["structures"]
     )
     app.include_router(
-        experiments_router,
-        prefix=f"{settings.api_prefix}/experiments",
-        tags=["experiments"]
+        workflows_router,
+        prefix=f"{settings.api_prefix}/workflows",
+        tags=["workflows"]
     )
     app.include_router(
-        knowledge_router,
-        prefix=f"{settings.api_prefix}/knowledge",
-        tags=["knowledge"]
+        jobs_router,
+        prefix=f"{settings.api_prefix}/jobs",
+        tags=["jobs"]
     )
     app.include_router(
         ml_router,
         prefix=f"{settings.api_prefix}",
         tags=["machine-learning"]
     )
+    app.include_router(
+        design_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["design"]
+    )
+    app.include_router(
+        provenance_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["provenance"]
+    )
 
-    # Add admin router if enabled
-    if settings.enable_admin_panel:
-        app.include_router(
-            admin_router,
-            prefix=f"{settings.api_prefix}/admin",
-            tags=["admin"]
-        )
-    
-    # Add WebSocket support if enabled
-    if settings.enable_websocket:
-        app.include_router(
-            websocket_router,
-            prefix="/ws",
-            tags=["websocket"]
-        )
-    
     # Add Prometheus metrics if enabled
     if settings.enable_metrics:
         instrumentator = Instrumentator()
@@ -277,16 +265,14 @@ def create_app() -> FastAPI:
             "version": "v1",
             "endpoints": {
                 "auth": f"{settings.api_prefix}/auth",
-                "users": f"{settings.api_prefix}/users",
                 "materials": f"{settings.api_prefix}/materials",
-                "simulations": f"{settings.api_prefix}/simulations",
-                "experiments": f"{settings.api_prefix}/experiments",
-                "knowledge": f"{settings.api_prefix}/knowledge",
+                "structures": f"{settings.api_prefix}/structures",
+                "workflows": f"{settings.api_prefix}/workflows",
+                "jobs": f"{settings.api_prefix}/jobs",
                 "ml": f"{settings.api_prefix}/ml",
-                "admin": f"{settings.api_prefix}/admin" if settings.enable_admin_panel else None,
+                "design": f"{settings.api_prefix}/design",
+                "provenance": f"{settings.api_prefix}/provenance",
             },
-            "websocket": "/ws" if settings.enable_websocket else None,
-            "graphql": f"{settings.api_prefix}/graphql" if settings.enable_graphql else None,
         }
     
     return app

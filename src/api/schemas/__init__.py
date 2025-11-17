@@ -50,11 +50,24 @@ from .ml import (
     BatchPredictionRequest,
     BatchPredictionResponse,
 )
+from .design import (
+    PropertyConstraint,
+    DesignSearchRequest,
+    CandidateStructure,
+    DesignSearchResponse,
+)
 from .common import (
     PaginationParams,
     PaginatedResponse,
     HealthResponse,
     VersionResponse,
+)
+from .provenance import (
+    ProvenanceRecordResponse,
+    ProvenanceChainResponse,
+    ProvenanceTimelineResponse,
+    ProvenanceSummaryResponse,
+    TimelineEvent,
 )
 
 __all__ = [
@@ -94,6 +107,17 @@ __all__ = [
     "PredictionHistoryResponse",
     "BatchPredictionRequest",
     "BatchPredictionResponse",
+    # Design
+    "PropertyConstraint",
+    "DesignSearchRequest",
+    "CandidateStructure",
+    "DesignSearchResponse",
+    # Provenance
+    "ProvenanceRecordResponse",
+    "ProvenanceChainResponse",
+    "ProvenanceTimelineResponse",
+    "ProvenanceSummaryResponse",
+    "TimelineEvent",
     # Common
     "PaginationParams",
     "PaginatedResponse",

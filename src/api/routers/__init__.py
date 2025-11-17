@@ -7,6 +7,8 @@ from .structures import router as structures_router
 from .workflows import router as workflows_router
 from .jobs import router as jobs_router
 from .ml import router as ml_router
+from .design import router as design_router
+from .provenance import router as provenance_router
 
 __all__ = [
     "health_router",
@@ -16,4 +18,6 @@ __all__ = [
     "workflows_router",
     "jobs_router",
     "ml_router",
+    "design_router",
+    "provenance_router",
 ]

@@ -25,6 +25,7 @@ import uuid
 
 from ..database import get_db
 from ..models import User, Structure, PredictedProperties
+from ..models.provenance import EntityType, EventType
 from ..schemas.ml import (
     PropertyPredictionRequest,
     PropertyPredictionResponse,
@@ -39,6 +40,11 @@ from ..exceptions import NotFoundError, ValidationError
 from backend.common.ml import (
     predict_properties_for_structure,
     get_available_models,
+)
+from backend.common.provenance import (
+    record_provenance,
+    get_system_info,
+    get_code_version,
 )
 
 logger = logging.getLogger(__name__)
@@ -206,6 +212,25 @@ async def predict_properties(
     await db.refresh(new_prediction)
 
     logger.info(f"Prediction saved with ID {new_prediction.id}")
+
+    # Record PREDICTED provenance event
+    await record_provenance(
+        db,
+        EntityType.PREDICTION,
+        new_prediction.id,
+        EventType.PREDICTED,
+        details={
+            "model_name": new_prediction.model_name,
+            "model_version": new_prediction.model_version,
+            "structure_id": str(request.structure_id),
+            "properties": new_prediction.properties,
+            "confidence_scores": new_prediction.confidence_scores,
+            "code_version": get_code_version(),
+            "host_info": get_system_info(),
+            "formula": structure.formula,
+            "num_atoms": structure.num_atoms,
+        }
+    )
 
     return PropertyPredictionResponse(
         id=new_prediction.id,
