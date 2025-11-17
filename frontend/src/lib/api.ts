@@ -56,7 +56,11 @@ export interface User {
 }
 
 // API base URL from environment variables
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Use empty string to make requests through Next.js proxy (avoiding CORS)
+// The proxy is configured in next.config.js to forward /api/v1/* to the backend
+const API_BASE_URL = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+  ? '' // Use Next.js proxy for local development
+  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000');
 
 /**
  * Create configured axios instance
