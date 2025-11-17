@@ -97,15 +97,15 @@ async def get_structure(structure_id: str):
             "crystal_system": "cubic",
             "a": 5.43, "b": 5.43, "c": 5.43,
             "alpha": 90.0, "beta": 90.0, "gamma": 90.0,
-            "atomic_positions": [
-                {"element": "Si", "position": [0.0, 0.0, 0.0]},
-                {"element": "Si", "position": [0.25, 0.25, 0.25]},
-                {"element": "Si", "position": [0.5, 0.5, 0.0]},
-                {"element": "Si", "position": [0.75, 0.75, 0.25]},
-                {"element": "Si", "position": [0.5, 0.0, 0.5]},
-                {"element": "Si", "position": [0.75, 0.25, 0.75]},
-                {"element": "Si", "position": [0.0, 0.5, 0.5]},
-                {"element": "Si", "position": [0.25, 0.75, 0.75]}
+            "atoms": [
+                ("Si", [0.0, 0.0, 0.0]),
+                ("Si", [0.25, 0.25, 0.25]),
+                ("Si", [0.5, 0.5, 0.0]),
+                ("Si", [0.75, 0.75, 0.25]),
+                ("Si", [0.5, 0.0, 0.5]),
+                ("Si", [0.75, 0.25, 0.75]),
+                ("Si", [0.0, 0.5, 0.5]),
+                ("Si", [0.25, 0.75, 0.75])
             ],
             "band_gap": 1.12,
             "formation_energy": -5.42,
@@ -119,11 +119,11 @@ async def get_structure(structure_id: str):
             "crystal_system": "hexagonal",
             "a": 3.19, "b": 3.19, "c": 5.19,
             "alpha": 90.0, "beta": 90.0, "gamma": 120.0,
-            "atomic_positions": [
-                {"element": "Ga", "position": [0.333, 0.667, 0.0]},
-                {"element": "Ga", "position": [0.667, 0.333, 0.5]},
-                {"element": "N", "position": [0.333, 0.667, 0.377]},
-                {"element": "N", "position": [0.667, 0.333, 0.877]}
+            "atoms": [
+                ("Ga", [0.333, 0.667, 0.0]),
+                ("Ga", [0.667, 0.333, 0.5]),
+                ("N", [0.333, 0.667, 0.377]),
+                ("N", [0.667, 0.333, 0.877])
             ],
             "band_gap": 3.44,
             "formation_energy": -1.15,
@@ -137,17 +137,17 @@ async def get_structure(structure_id: str):
             "crystal_system": "trigonal",
             "a": 5.035, "b": 5.035, "c": 13.75,
             "alpha": 90.0, "beta": 90.0, "gamma": 120.0,
-            "atomic_positions": [
-                {"element": "Fe", "position": [0.0, 0.0, 0.355]},
-                {"element": "Fe", "position": [0.0, 0.0, 0.145]},
-                {"element": "Fe", "position": [0.333, 0.667, 0.022]},
-                {"element": "Fe", "position": [0.667, 0.333, 0.645]},
-                {"element": "O", "position": [0.306, 0.0, 0.25]},
-                {"element": "O", "position": [0.0, 0.306, 0.25]},
-                {"element": "O", "position": [0.694, 0.694, 0.25]},
-                {"element": "O", "position": [0.639, 0.333, 0.917]},
-                {"element": "O", "position": [0.333, 0.972, 0.917]},
-                {"element": "O", "position": [0.028, 0.667, 0.917]}
+            "atoms": [
+                ("Fe", [0.0, 0.0, 0.355]),
+                ("Fe", [0.0, 0.0, 0.145]),
+                ("Fe", [0.333, 0.667, 0.022]),
+                ("Fe", [0.667, 0.333, 0.645]),
+                ("O", [0.306, 0.0, 0.25]),
+                ("O", [0.0, 0.306, 0.25]),
+                ("O", [0.694, 0.694, 0.25]),
+                ("O", [0.639, 0.333, 0.917]),
+                ("O", [0.333, 0.972, 0.917]),
+                ("O", [0.028, 0.667, 0.917])
             ],
             "band_gap": 2.2,
             "formation_energy": -8.26,
@@ -161,13 +161,13 @@ async def get_structure(structure_id: str):
             "crystal_system": "tetragonal",
             "a": 4.593, "b": 4.593, "c": 2.959,
             "alpha": 90.0, "beta": 90.0, "gamma": 90.0,
-            "atomic_positions": [
-                {"element": "Ti", "position": [0.0, 0.0, 0.0]},
-                {"element": "Ti", "position": [0.5, 0.5, 0.5]},
-                {"element": "O", "position": [0.305, 0.305, 0.0]},
-                {"element": "O", "position": [0.695, 0.695, 0.0]},
-                {"element": "O", "position": [0.805, 0.195, 0.5]},
-                {"element": "O", "position": [0.195, 0.805, 0.5]}
+            "atoms": [
+                ("Ti", [0.0, 0.0, 0.0]),
+                ("Ti", [0.5, 0.5, 0.5]),
+                ("O", [0.305, 0.305, 0.0]),
+                ("O", [0.695, 0.695, 0.0]),
+                ("O", [0.805, 0.195, 0.5]),
+                ("O", [0.195, 0.805, 0.5])
             ],
             "band_gap": 3.2,
             "formation_energy": -9.73,
@@ -181,17 +181,17 @@ async def get_structure(structure_id: str):
             "crystal_system": "trigonal",
             "a": 4.759, "b": 4.759, "c": 12.99,
             "alpha": 90.0, "beta": 90.0, "gamma": 120.0,
-            "atomic_positions": [
-                {"element": "Al", "position": [0.0, 0.0, 0.352]},
-                {"element": "Al", "position": [0.0, 0.0, 0.148]},
-                {"element": "Al", "position": [0.333, 0.667, 0.019]},
-                {"element": "Al", "position": [0.667, 0.333, 0.648]},
-                {"element": "O", "position": [0.306, 0.0, 0.25]},
-                {"element": "O", "position": [0.0, 0.306, 0.25]},
-                {"element": "O", "position": [0.694, 0.694, 0.25]},
-                {"element": "O", "position": [0.639, 0.333, 0.917]},
-                {"element": "O", "position": [0.333, 0.972, 0.917]},
-                {"element": "O", "position": [0.028, 0.667, 0.917]}
+            "atoms": [
+                ("Al", [0.0, 0.0, 0.352]),
+                ("Al", [0.0, 0.0, 0.148]),
+                ("Al", [0.333, 0.667, 0.019]),
+                ("Al", [0.667, 0.333, 0.648]),
+                ("O", [0.306, 0.0, 0.25]),
+                ("O", [0.0, 0.306, 0.25]),
+                ("O", [0.694, 0.694, 0.25]),
+                ("O", [0.639, 0.333, 0.917]),
+                ("O", [0.333, 0.972, 0.917]),
+                ("O", [0.028, 0.667, 0.917])
             ],
             "band_gap": 8.8,
             "formation_energy": -16.83,
@@ -201,6 +201,10 @@ async def get_structure(structure_id: str):
     ]
 
     material = materials[idx % len(materials)]
+
+    # Extract atomic species and positions separately
+    atomic_species = [atom[0] for atom in material["atoms"]]
+    atomic_positions = [atom[1] for atom in material["atoms"]]
 
     return {
         "id": structure_id,
@@ -214,8 +218,9 @@ async def get_structure(structure_id: str):
         "alpha": material["alpha"],
         "beta": material["beta"],
         "gamma": material["gamma"],
-        "atomic_positions": material["atomic_positions"],
-        "num_atoms": len(material["atomic_positions"]),
+        "atomic_species": atomic_species,
+        "atomic_positions": atomic_positions,
+        "num_atoms": len(atomic_positions),
         "band_gap": material["band_gap"],
         "formation_energy": material["formation_energy"],
         "density": material["density"],
