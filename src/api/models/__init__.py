@@ -48,6 +48,12 @@ from .orchestrator import (
     AgentCommand,
     OrchestratorMode,
 )
+from .photonics import PhotonicsStructure, PhotonicsSimulationJob, PhotonicsStructureType
+from .battery import BatteryMaterial, BatteryRole
+from .quantum import QuantumMaterial, WannierSetup
+from .metamaterial import MetamaterialUnitCell, MetamaterialSimulationJob, MetamaterialType
+from .pcm import PCMMaterial
+from .execution import ExecutionProfile, ExecutionBackendType
 
 __all__ = [
     "User",
@@ -82,4 +88,17 @@ __all__ = [
     "OrchestratorRun",
     "AgentCommand",
     "OrchestratorMode",
+    "PhotonicsStructure",
+    "PhotonicsSimulationJob",
+    "PhotonicsStructureType",
+    "BatteryMaterial",
+    "BatteryRole",
+    "QuantumMaterial",
+    "WannierSetup",
+    "MetamaterialUnitCell",
+    "MetamaterialSimulationJob",
+    "MetamaterialType",
+    "PCMMaterial",
+    "ExecutionProfile",
+    "ExecutionBackendType",
 ]
