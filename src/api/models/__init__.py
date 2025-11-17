@@ -36,6 +36,12 @@ from .multiscale import (
     MultiscaleJobStatus,
 )
 from .campaign import DesignCampaign, DesignIteration, CampaignStatus
+from .experiment import (
+    Instrument,
+    ExperimentRun,
+    InstrumentStatus,
+    ExperimentStatus,
+)
 
 __all__ = [
     "User",
@@ -62,4 +68,8 @@ __all__ = [
     "DesignCampaign",
     "DesignIteration",
     "CampaignStatus",
+    "Instrument",
+    "ExperimentRun",
+    "InstrumentStatus",
+    "ExperimentStatus",
 ]

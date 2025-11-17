@@ -1,0 +1,65 @@
+# TMD Screening Workflow
+# Demonstrates structure generation, ML prediction, filtering, and DFT validation
+
+name: "TMD Bandgap Screening Workflow"
+version: "1.0"
+description: |
+  Generate transition metal dichalcogenide (TMD) structures,
+  predict their bandgaps using ML, filter candidates, and
+  validate with DFT calculations.
+
+steps:
+  # Step 1: Generate candidate structures
+  - name: "generate_tmd_structures"
+    type: "structure_generation"
+    params:
+      elements: ["Mo", "W", "S", "Se", "Te"]
+      num_structures: 20
+      dimensionality: 2
+      lattice_type: "hexagonal"
+    outputs:
+      - structures
+
+  # Step 2: Predict bandgaps with ML
+  - name: "predict_bandgaps"
+    type: "ml_prediction"
+    inputs:
+      - structures
+    params:
+      model: "cgcnn_bandgap_v1"
+      properties: ["bandgap", "formation_energy"]
+    outputs:
+      - predictions
+
+  # Step 3: Filter promising candidates
+  - name: "filter_candidates"
+    type: "filter"
+    inputs:
+      - predictions
+    params:
+      criteria:
+        bandgap:
+          min: 1.5
+          max: 2.5
+        formation_energy:
+          max: -2.0
+    outputs:
+      - filtered_candidates
+
+  # Step 4: Submit DFT validation jobs
+  - name: "validate_with_dft"
+    type: "dft_batch"
+    inputs:
+      - filtered_candidates
+    params:
+      functional: "PBE"
+      kpoints_density: 0.04
+      is_relaxation: true
+      priority: 8
+    outputs:
+      - dft_jobs
+
+metadata:
+  author: "NANO-OS Team"
+  created: "2025-01-17"
+  tags: ["TMD", "bandgap", "screening"]
