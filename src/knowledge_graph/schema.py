@@ -88,7 +88,7 @@ class BaseNode:
 @dataclass
 class MaterialNode(BaseNode):
     """Material entity in the knowledge graph"""
-    formula: str
+    formula: str = ""  # Required field, empty string as placeholder
     name: Optional[str] = None
     structure_type: Optional[StructureType] = None
     crystal_system: Optional[CrystalSystem] = None
