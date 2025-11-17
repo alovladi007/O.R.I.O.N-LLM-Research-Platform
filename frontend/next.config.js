@@ -121,27 +121,10 @@ const nextConfig = {
   },
   
   // Experimental features
-  experimental: {
-    // Enable server components
-    serverComponents: true,
-    // Optimize CSS
-    optimizeCss: true,
-    // Enable SWC plugins
-    swcPlugins: [
-      ['next-superjson-plugin', {}],
-    ],
-  },
-  
+  experimental: {},
+
   // Performance monitoring
   analyticsId: process.env.NEXT_PUBLIC_ANALYTICS_ID,
-  
-  // PWA configuration
-  pwa: {
-    dest: 'public',
-    register: true,
-    skipWaiting: true,
-    disable: process.env.NODE_ENV === 'development',
-  },
   
   // Compiler options
   compiler: {
