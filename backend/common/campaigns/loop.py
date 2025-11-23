@@ -148,8 +148,8 @@ class DesignLoopService:
             - Check campaign.status before calling
             - Monitor iteration.metrics for learning signals
         """
-        from ...src.api.models.campaign import DesignCampaign, DesignIteration, CampaignStatus
-        from ...src.api.models.structure import Structure
+        from src.api.models.campaign import DesignCampaign, DesignIteration, CampaignStatus
+        from src.api.models.structure import Structure
 
         logger.info(f"Starting iteration for campaign {campaign_id}")
 
@@ -388,8 +388,8 @@ class DesignLoopService:
             - Strategies: "random", "bayesian", "genetic", "rl", "generative"
             - Agents can provide seed structures in config["seed_structures"]
         """
-        from ...src.api.models.structure import Structure, StructureSource
-        from ...src.api.models.material import Material
+        from src.api.models.structure import Structure, StructureSource
+        from src.api.models.material import Material
 
         logger.info(f"Generating {num_candidates} candidates for campaign {campaign.id}")
 
@@ -517,7 +517,7 @@ class DesignLoopService:
             - Agents can use property_scores to understand which targets are met
             - Future: Include uncertainty estimates for decision-making
         """
-        from ...backend.common.ml.properties import predict_properties_for_structure
+        from backend.common.ml.properties import predict_properties_for_structure
 
         logger.info(f"Evaluating {len(candidates)} candidates")
 

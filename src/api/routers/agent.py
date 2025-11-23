@@ -313,34 +313,113 @@ async def advance_campaign(
                 detail=f"Campaign {request.campaign_id} is already completed"
             )
 
-        # TODO: Trigger actual campaign advancement
-        # For now, simulate advancement
+        # Activate campaign if it's in CREATED or PENDING state
+        if campaign.status in [CampaignStatus.CREATED, CampaignStatus.PENDING]:
+            campaign.status = CampaignStatus.RUNNING
+            campaign.started_at = datetime.utcnow()
+            await db.commit()
+            logger.info(f"Activated campaign {campaign.name} (status -> RUNNING)")
+
+        # Calculate iterations to run
         iterations_to_run = min(
             request.num_iterations,
             campaign.max_iterations - campaign.current_iteration
         )
 
+        if iterations_to_run <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Campaign has no iterations remaining ({campaign.current_iteration}/{campaign.max_iterations})"
+            )
+
+        # Run iterations using DesignLoopService
+        from backend.common.campaigns.loop import DesignLoopService
+
+        iterations_completed = []
+        iterations_failed = []
+
+        for i in range(iterations_to_run):
+            try:
+                logger.info(
+                    f"Running iteration {campaign.current_iteration + 1}/{campaign.max_iterations} "
+                    f"for campaign {campaign.name}"
+                )
+
+                # Run one iteration
+                iteration = await DesignLoopService.run_iteration(
+                    db=db,
+                    campaign_id=campaign.id
+                )
+
+                iterations_completed.append({
+                    "iteration_index": iteration.iteration_index,
+                    "best_score": iteration.best_score_this_iter,
+                    "num_candidates": iteration.num_candidates_created,
+                    "metrics": iteration.metrics
+                })
+
+                # Refresh campaign to get updated state
+                await db.refresh(campaign)
+
+                logger.info(
+                    f"Iteration {iteration.iteration_index} completed. "
+                    f"Best score: {iteration.best_score_this_iter:.3f if iteration.best_score_this_iter else 'N/A'}"
+                )
+
+                # Check if campaign completed during iteration
+                if campaign.status == CampaignStatus.COMPLETED:
+                    logger.info(f"Campaign {campaign.name} reached max iterations")
+                    break
+
+            except Exception as e:
+                logger.error(f"Iteration {i + 1} failed: {e}", exc_info=True)
+                iterations_failed.append({
+                    "iteration_number": i + 1,
+                    "error": str(e)
+                })
+                # Don't fail the entire advancement if one iteration fails
+                continue
+
+        # Build result
+        result_data = {
+            "campaign_id": str(campaign.id),
+            "iterations_requested": iterations_to_run,
+            "iterations_completed": len(iterations_completed),
+            "iterations_failed": len(iterations_failed),
+            "current_iteration": campaign.current_iteration,
+            "max_iterations": campaign.max_iterations,
+            "campaign_status": campaign.status.value,
+            "best_score": campaign.best_score,
+            "iterations": iterations_completed
+        }
+
+        if iterations_failed:
+            result_data["failed_iterations"] = iterations_failed
+
         # Record success
         command.success = True
         command.completed_at = datetime.utcnow()
         command.duration_seconds = (command.completed_at - command.executed_at).total_seconds()
-        command.result = {
-            "campaign_id": str(campaign.id),
-            "iterations_queued": iterations_to_run,
-            "message": f"Queued {iterations_to_run} iterations for campaign '{campaign.name}'"
-        }
+        command.result = result_data
 
         db.add(command)
         await db.commit()
 
-        logger.info(f"Agent advanced campaign: {campaign.name} (+{iterations_to_run} iterations)")
+        message = (
+            f"Completed {len(iterations_completed)} iterations for campaign '{campaign.name}'. "
+            f"Progress: {campaign.current_iteration}/{campaign.max_iterations}"
+        )
+        if iterations_failed:
+            message += f". {len(iterations_failed)} iterations failed."
+
+        logger.info(f"Agent advanced campaign: {campaign.name} (+{len(iterations_completed)} iterations)")
 
         return AgentCommandResponse(
             command_id=command.id,
             command_type=command.command_type,
             success=True,
-            result=command.result,
-            message=f"Queued {iterations_to_run} iterations for campaign '{campaign.name}'",
+            result=result_data,
+            message=message,
             timestamp=command.completed_at,
         )
 
