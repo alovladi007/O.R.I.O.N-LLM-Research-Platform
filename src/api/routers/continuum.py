@@ -212,9 +212,14 @@ async def submit_continuum_job(
     # Update job status to QUEUED
     job.status = MultiscaleJobStatus.QUEUED
 
-    # TODO: Enqueue task to Celery
-    # For now, just set a stub task ID
-    job.celery_task_id = f"continuum-task-{job_id}"
+    # Enqueue task to Celery
+    from src.worker.tasks import run_continuum_simulation
+
+    celery_task = run_continuum_simulation.apply_async(
+        args=[str(job_id)],
+        task_id=f"continuum-{job_id}"
+    )
+    job.celery_task_id = celery_task.id
 
     await db.commit()
     await db.refresh(job)

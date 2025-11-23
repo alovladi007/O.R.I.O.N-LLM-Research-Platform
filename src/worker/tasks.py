@@ -780,6 +780,22 @@ def cancel_job(self, job_id: str) -> Dict[str, Any]:
                 "reason": f"Job already in terminal state: {job.status}",
             }
 
+        # Terminate the actual Celery task if it's running
+        if job.task_id:
+            try:
+                from src.worker.celery_app import celery_app
+
+                # Revoke the task with terminate=True to kill running worker
+                celery_app.control.revoke(
+                    job.task_id,
+                    terminate=True,
+                    signal='SIGTERM'
+                )
+                logger.info(f"Revoked Celery task {job.task_id} for job {job_id}")
+            except Exception as revoke_error:
+                logger.warning(f"Failed to revoke Celery task {job.task_id}: {revoke_error}")
+                # Continue with status update even if revoke fails
+
         # Update status to CANCELLED
         asyncio.run(
             self._update_job_status_async(
@@ -790,18 +806,152 @@ def cancel_job(self, job_id: str) -> Dict[str, Any]:
             )
         )
 
-        # TODO: In future, terminate the actual simulation process if running
-
         logger.info(f"Job {job_id} cancelled successfully")
 
         return {
             "job_id": job_id,
             "cancelled": True,
+            "task_id": job.task_id if job.task_id else None,
         }
 
     except Exception as e:
         logger.error(f"Failed to cancel job {job_id}: {e}", exc_info=True)
         raise
+
+
+@celery_app.task(
+    name="run_continuum_simulation",
+    base=DatabaseTask,
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def run_continuum_simulation(self, job_id: str) -> Dict[str, Any]:
+    """
+    Run continuum-scale simulation (FEM/FVM/BEM).
+
+    Args:
+        job_id: UUID of the continuum simulation job
+
+    Returns:
+        Dictionary with job results
+    """
+    logger.info(f"[Continuum Job {job_id}] Starting simulation")
+
+    # For now, this is a stub that follows the same pattern as run_simulation_job
+    # In production, this would invoke FEM/FVM/BEM engines
+
+    # TODO: Implement actual continuum simulation execution
+    # For now, just mark as completed
+    try:
+        asyncio.run(
+            self._update_job_status_async(
+                job_id,
+                "RUNNING",
+                started_at=datetime.utcnow(),
+                worker_id=self.request.id,
+                current_step="Running continuum simulation",
+            )
+        )
+
+        # Simulate work
+        time.sleep(2)
+
+        asyncio.run(
+            self._update_job_status_async(
+                job_id,
+                "COMPLETED",
+                finished_at=datetime.utcnow(),
+                current_step="Completed",
+            )
+        )
+
+        logger.info(f"[Continuum Job {job_id}] Completed successfully")
+
+        return {
+            "job_id": job_id,
+            "status": "success",
+            "message": "Continuum simulation completed (stub implementation)"
+        }
+
+    except Exception as e:
+        logger.error(f"[Continuum Job {job_id}] Failed: {e}", exc_info=True)
+        asyncio.run(
+            self._update_job_status_async(
+                job_id,
+                "FAILED",
+                error_message=str(e),
+                finished_at=datetime.utcnow(),
+            )
+        )
+        raise self.retry(exc=e)
+
+
+@celery_app.task(
+    name="run_mesoscale_simulation",
+    base=DatabaseTask,
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def run_mesoscale_simulation(self, job_id: str) -> Dict[str, Any]:
+    """
+    Run mesoscale simulation (molecular dynamics, phase field, etc.).
+
+    Args:
+        job_id: UUID of the mesoscale simulation job
+
+    Returns:
+        Dictionary with job results
+    """
+    logger.info(f"[Mesoscale Job {job_id}] Starting simulation")
+
+    # For now, this is a stub that follows the same pattern as run_simulation_job
+    # In production, this would invoke LAMMPS or other mesoscale engines
+
+    # TODO: Implement actual mesoscale simulation execution
+    try:
+        asyncio.run(
+            self._update_job_status_async(
+                job_id,
+                "RUNNING",
+                started_at=datetime.utcnow(),
+                worker_id=self.request.id,
+                current_step="Running mesoscale simulation",
+            )
+        )
+
+        # Simulate work
+        time.sleep(2)
+
+        asyncio.run(
+            self._update_job_status_async(
+                job_id,
+                "COMPLETED",
+                finished_at=datetime.utcnow(),
+                current_step="Completed",
+            )
+        )
+
+        logger.info(f"[Mesoscale Job {job_id}] Completed successfully")
+
+        return {
+            "job_id": job_id,
+            "status": "success",
+            "message": "Mesoscale simulation completed (stub implementation)"
+        }
+
+    except Exception as e:
+        logger.error(f"[Mesoscale Job {job_id}] Failed: {e}", exc_info=True)
+        asyncio.run(
+            self._update_job_status_async(
+                job_id,
+                "FAILED",
+                error_message=str(e),
+                finished_at=datetime.utcnow(),
+            )
+        )
+        raise self.retry(exc=e)
 
 
 @celery_app.task(

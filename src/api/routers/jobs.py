@@ -601,7 +601,23 @@ async def cancel_simulation_job(
 
     logger.info(f"Simulation job cancelled: {job_id}")
 
-    # TODO: Signal worker to stop execution (via Celery, Redis, etc.)
+    # Signal worker to stop execution via Celery
+    if job.task_id:
+        try:
+            from src.worker.celery_app import celery_app
+
+            # Revoke the task - terminate=True will kill the worker process
+            # if it's already running, otherwise just removes it from queue
+            celery_app.control.revoke(
+                job.task_id,
+                terminate=True,
+                signal='SIGTERM'  # Graceful termination
+            )
+            logger.info(f"Revoked Celery task {job.task_id} for job {job_id}")
+        except Exception as e:
+            logger.error(f"Failed to revoke Celery task {job.task_id}: {e}")
+            # Don't fail the cancellation if Celery revoke fails
+            # Job is still marked as CANCELLED in the database
 
     return SimulationJobResponse.model_validate(job)
 

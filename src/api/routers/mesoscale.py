@@ -212,9 +212,14 @@ async def submit_mesoscale_job(
     # Update job status to QUEUED
     job.status = MultiscaleJobStatus.QUEUED
 
-    # TODO: Enqueue task to Celery
-    # For now, just set a stub task ID
-    job.celery_task_id = f"mesoscale-task-{job_id}"
+    # Enqueue task to Celery
+    from src.worker.tasks import run_mesoscale_simulation
+
+    celery_task = run_mesoscale_simulation.apply_async(
+        args=[str(job_id)],
+        task_id=f"mesoscale-{job_id}"
+    )
+    job.celery_task_id = celery_task.id
 
     await db.commit()
     await db.refresh(job)
