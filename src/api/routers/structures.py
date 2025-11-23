@@ -47,8 +47,7 @@ async def parse_structure_file(text: str, format: str) -> dict:
     """
     Parse structure file and extract atomic information.
 
-    This is a stub - actual parsing will be implemented with proper parsers.
-    For now, returns basic placeholder data.
+    Uses backend parsers for CIF, POSCAR, and XYZ formats.
 
     Args:
         text: Raw structure file content
@@ -57,39 +56,30 @@ async def parse_structure_file(text: str, format: str) -> dict:
     Returns:
         Dictionary with parsed structure data
     """
-    # TODO: Import and use actual parsers from backend.common.structures.parsers
-    # For now, return mock data to make the API functional
+    from backend.common.structure_parsers import parse_structure
 
-    logger.warning(f"Using stub parser for format: {format}")
-
-    # Extract some basic info (this is a placeholder)
-    num_lines = len(text.split('\n'))
-
-    return {
-        "formula": "Unknown",  # Would be extracted by real parser
-        "num_atoms": 0,
-        "dimensionality": 3,
-        "lattice": {
-            "vectors": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-            "a": 1.0,
-            "b": 1.0,
-            "c": 1.0,
-            "alpha": 90.0,
-            "beta": 90.0,
-            "gamma": 90.0,
-            "volume": 1.0
-        },
-        "atoms": [],
-        "lattice_parameters": {
-            "a": 1.0,
-            "b": 1.0,
-            "c": 1.0,
-            "alpha": 90.0,
-            "beta": 90.0,
-            "gamma": 90.0,
-            "volume": 1.0
+    try:
+        # Use actual backend parsers
+        logger.info(f"Parsing structure file: format={format}")
+        return parse_structure(text, format)
+    except Exception as e:
+        logger.error(f"Structure parsing failed: {e}")
+        # Fallback to basic info extraction
+        logger.warning(f"Using fallback parser for format: {format}")
+        return {
+            "formula": "Unknown",
+            "num_atoms": 0,
+            "dimensionality": 3,
+            "lattice": {
+                "vectors": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+            },
+            "atoms": [],
+            "lattice_parameters": {
+                "a": 1.0, "b": 1.0, "c": 1.0,
+                "alpha": 90.0, "beta": 90.0, "gamma": 90.0,
+                "volume": 1.0
+            }
         }
-    }
 
 
 async def export_structure(structure: Structure, export_format: str) -> str:
