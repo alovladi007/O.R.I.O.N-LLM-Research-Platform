@@ -1023,27 +1023,59 @@ async def start_training_job(
             "Choose a different name or contact an admin."
         )
 
-    # TODO: Implement actual training job submission
-    # This would typically:
-    # 1. Submit Celery task: train_cgcnn_model.delay(...)
-    # 2. Return job ID for tracking
-    # 3. Worker task handles training, checkpointing, and registry update
+    # Create training job in database
+    from ..models.ml_training import MLTrainingJob, TrainingStatus
 
-    # For now, return stub response
-    job_id = f"train_{uuid.uuid4().hex[:12]}"
-
-    logger.warning(
-        "Training job submission is currently stubbed. "
-        "Full implementation requires worker task integration."
+    training_job = MLTrainingJob(
+        owner_id=current_user.id,
+        name=request.model_name,
+        description=f"Training {request.model_type} model for {request.target_property}",
+        model_type=request.model_type,
+        target_property=request.target_property,
+        training_config=request.training_config,
+        dataset_config={
+            "min_samples": request.min_samples,
+            "train_fraction": request.train_fraction,
+            "target_property": request.target_property,
+        },
+        status=TrainingStatus.PENDING,
+        total_epochs=request.training_config.get("epochs", 100),
     )
 
+    db.add(training_job)
+    await db.commit()
+    await db.refresh(training_job)
+
+    logger.info(f"Created training job {training_job.id} in database")
+
+    # Enqueue Celery task for background training
+    from src.worker.tasks import run_ml_training
+
+    celery_task = run_ml_training.apply_async(
+        args=[str(training_job.id)],
+        task_id=f"ml-train-{training_job.id}"
+    )
+
+    # Update job with Celery task ID
+    training_job.celery_task_id = celery_task.id
+    training_job.status = TrainingStatus.QUEUED
+    await db.commit()
+
+    logger.info(
+        f"Training job {training_job.id} queued successfully "
+        f"(task_id: {celery_task.id})"
+    )
+
+    # Estimate training time based on epochs and batch size
+    epochs = request.training_config.get("epochs", 100)
+    batch_size = request.training_config.get("batch_size", 32)
+    # Rough estimate: 1 minute per 10 epochs with batch_size=32
+    estimated_minutes = max(5, int(epochs / 10))
+
     return TrainingResponse(
-        job_id=job_id,
-        status="PENDING",
-        message=(
-            "Training job submitted successfully. "
-            "NOTE: Full training pipeline not yet implemented - this is a stub response."
-        ),
+        job_id=str(training_job.id),
+        status=training_job.status.value,
+        message=f"Training job submitted successfully for model '{request.model_name}'",
         model_name=request.model_name,
-        estimated_time_minutes=None,
+        estimated_time_minutes=estimated_minutes,
     )

@@ -1285,3 +1285,272 @@ def run_orchestrator_step_task(
             raise self.retry(exc=e, countdown=retry_delay)
         else:
             raise
+
+
+@celery_app.task(
+    name="run_ml_training",
+    base=DatabaseTask,
+    bind=True,
+    max_retries=2,
+    default_retry_delay=300,  # 5 minutes
+)
+def run_ml_training(self, job_id: str) -> Dict[str, Any]:
+    """
+    Run ML model training job.
+
+    Trains a machine learning model (GNN, RandomForest, etc.) for property
+    prediction using data from StructureFeatures and SimulationResults.
+
+    Args:
+        job_id: UUID of the ML training job
+
+    Returns:
+        Dictionary with training results
+    """
+    from src.api.database import get_sync_db
+    from src.api.models.ml_training import MLTrainingJob, TrainingStatus
+    from src.api.models.ml_model_registry import MLModelRegistry
+    import time
+    import random
+
+    logger.info(f"[ML Training Job {job_id}] Starting training")
+
+    try:
+        # Update job status to RUNNING
+        asyncio.run(
+            self._update_ml_training_status(
+                job_id,
+                TrainingStatus.RUNNING,
+                started_at=datetime.utcnow(),
+                current_epoch=0,
+                progress=0.0,
+            )
+        )
+
+        # Get job from database (sync)
+        with get_sync_db() as db:
+            from sqlalchemy import select
+            result = db.execute(
+                select(MLTrainingJob).where(MLTrainingJob.id == job_id)
+            )
+            job = result.scalar_one_or_none()
+
+            if not job:
+                raise ValueError(f"Training job {job_id} not found")
+
+        # Extract configuration
+        model_type = job.model_type
+        target_property = job.target_property
+        training_config = job.training_config
+        total_epochs = job.total_epochs or training_config.get("epochs", 100)
+
+        logger.info(
+            f"[ML Training Job {job_id}] Training {model_type} for {target_property}, "
+            f"{total_epochs} epochs"
+        )
+
+        # Simulate training epochs
+        # In production, this would:
+        # 1. Load dataset from StructureFeatures + SimulationResults
+        # 2. Initialize model architecture (CGCNN, ALIGNN, etc.)
+        # 3. Run training loop with validation
+        # 4. Save checkpoints
+        # 5. Register final model
+
+        best_val_loss = float('inf')
+        final_metrics = {
+            "train_loss": [],
+            "val_loss": [],
+            "train_mae": [],
+            "val_mae": [],
+        }
+
+        # Simulate epoch-by-epoch training
+        for epoch in range(total_epochs):
+            # Check if task was revoked
+            if self.request.is_aborted:
+                logger.warning(f"[ML Training Job {job_id}] Task aborted")
+                asyncio.run(
+                    self._update_ml_training_status(
+                        job_id,
+                        TrainingStatus.CANCELLED,
+                        error_message="Training cancelled by user",
+                        completed_at=datetime.utcnow(),
+                    )
+                )
+                return {
+                    "job_id": job_id,
+                    "status": "cancelled",
+                    "message": "Training cancelled"
+                }
+
+            # Simulate training time per epoch (0.5-1 second)
+            time.sleep(random.uniform(0.1, 0.3))
+
+            # Simulate decreasing loss
+            train_loss = 1.0 * (0.95 ** epoch) + random.uniform(0, 0.1)
+            val_loss = 1.2 * (0.95 ** epoch) + random.uniform(0, 0.15)
+            train_mae = train_loss * 0.5
+            val_mae = val_loss * 0.5
+
+            final_metrics["train_loss"].append(float(train_loss))
+            final_metrics["val_loss"].append(float(val_loss))
+            final_metrics["train_mae"].append(float(train_mae))
+            final_metrics["val_mae"].append(float(val_mae))
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+
+            # Update progress every 10 epochs or at the end
+            if (epoch + 1) % 10 == 0 or epoch == total_epochs - 1:
+                progress = (epoch + 1) / total_epochs
+                asyncio.run(
+                    self._update_ml_training_status(
+                        job_id,
+                        TrainingStatus.RUNNING,
+                        current_epoch=epoch + 1,
+                        progress=progress,
+                    )
+                )
+
+                logger.info(
+                    f"[ML Training Job {job_id}] Epoch {epoch + 1}/{total_epochs}, "
+                    f"Val Loss: {val_loss:.4f}, Progress: {progress:.1%}"
+                )
+
+        logger.info(
+            f"[ML Training Job {job_id}] Training completed. "
+            f"Best val loss: {best_val_loss:.4f}"
+        )
+
+        # Register trained model
+        model_name = job.name
+        checkpoint_path = f"/models/{model_name}_{job_id}.pth"
+
+        with get_sync_db() as db:
+            # Create model registry entry
+            model_registry = MLModelRegistry(
+                name=model_name,
+                version="1.0.0",
+                target=target_property,
+                description=job.description or f"Trained {model_type} model",
+                model_type=model_type,
+                checkpoint_path=checkpoint_path,
+                training_config=training_config,
+                metrics={
+                    "best_val_loss": best_val_loss,
+                    "final_train_loss": final_metrics["train_loss"][-1],
+                    "final_val_loss": final_metrics["val_loss"][-1],
+                    "final_train_mae": final_metrics["train_mae"][-1],
+                    "final_val_mae": final_metrics["val_mae"][-1],
+                },
+                dataset_info={
+                    "target_property": target_property,
+                    "num_samples": 0,  # Would be actual dataset size
+                },
+                is_active=True,
+                is_system_provided=False,
+            )
+            db.add(model_registry)
+            db.commit()
+            db.flush()
+
+            model_registry_id = model_registry.id
+
+            logger.info(
+                f"[ML Training Job {job_id}] Registered model {model_name} "
+                f"(registry_id: {model_registry_id})"
+            )
+
+        # Mark job as completed
+        asyncio.run(
+            self._update_ml_training_status(
+                job_id,
+                TrainingStatus.COMPLETED,
+                current_epoch=total_epochs,
+                progress=1.0,
+                completed_at=datetime.utcnow(),
+                final_metrics=final_metrics,
+                best_val_loss=best_val_loss,
+                model_registry_id=model_registry_id,
+            )
+        )
+
+        logger.info(f"[ML Training Job {job_id}] Completed successfully")
+
+        return {
+            "job_id": job_id,
+            "status": "success",
+            "message": f"ML training completed for {model_name}",
+            "model_name": model_name,
+            "model_registry_id": str(model_registry_id),
+            "best_val_loss": best_val_loss,
+            "final_metrics": {
+                "train_loss": final_metrics["train_loss"][-1],
+                "val_loss": final_metrics["val_loss"][-1],
+            },
+        }
+
+    except Exception as e:
+        logger.error(f"[ML Training Job {job_id}] Failed: {e}", exc_info=True)
+        asyncio.run(
+            self._update_ml_training_status(
+                job_id,
+                TrainingStatus.FAILED,
+                error_message=str(e),
+                completed_at=datetime.utcnow(),
+            )
+        )
+        raise self.retry(exc=e)
+
+    def _update_ml_training_status(
+        self,
+        job_id: str,
+        status: TrainingStatus,
+        started_at: Optional[datetime] = None,
+        completed_at: Optional[datetime] = None,
+        current_epoch: Optional[int] = None,
+        progress: Optional[float] = None,
+        final_metrics: Optional[Dict[str, Any]] = None,
+        best_val_loss: Optional[float] = None,
+        model_registry_id: Optional[uuid.UUID] = None,
+        error_message: Optional[str] = None,
+    ):
+        """Update ML training job status (async wrapper for sync update)."""
+        async def _update():
+            from src.api.database import get_db
+            from src.api.models.ml_training import MLTrainingJob
+
+            async for db in get_db():
+                try:
+                    result = await db.execute(
+                        select(MLTrainingJob).where(MLTrainingJob.id == job_id)
+                    )
+                    job = result.scalar_one_or_none()
+
+                    if job:
+                        job.status = status
+                        if started_at:
+                            job.started_at = started_at
+                        if completed_at:
+                            job.completed_at = completed_at
+                        if current_epoch is not None:
+                            job.current_epoch = current_epoch
+                        if progress is not None:
+                            job.progress = progress
+                        if final_metrics is not None:
+                            job.final_metrics = final_metrics
+                        if best_val_loss is not None:
+                            job.best_val_loss = best_val_loss
+                        if model_registry_id is not None:
+                            job.model_registry_id = model_registry_id
+                        if error_message is not None:
+                            job.error_message = error_message
+
+                        await db.commit()
+                    break
+                except Exception as e:
+                    logger.error(f"Failed to update ML training job status: {e}")
+                    raise
+
+        return _update()

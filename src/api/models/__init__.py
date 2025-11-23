@@ -21,6 +21,7 @@ from .structure import Structure
 from .structure_features import StructureFeatures
 from .ml_model_registry import MLModelRegistry
 from .ml_potential import MLPotential
+from .ml_training import MLTrainingJob, TrainingStatus
 from .workflow import WorkflowTemplate
 from .simulation import SimulationJob, SimulationResult
 from .embedding import VectorEmbedding
@@ -56,6 +57,8 @@ __all__ = [
     "StructureFeatures",
     "MLModelRegistry",
     "MLPotential",
+    "MLTrainingJob",
+    "TrainingStatus",
     "WorkflowTemplate",
     "SimulationJob",
     "SimulationResult",
