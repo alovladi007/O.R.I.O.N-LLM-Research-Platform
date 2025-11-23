@@ -896,7 +896,12 @@ def run_continuum_simulation(self, job_id: str) -> Dict[str, Any]:
 )
 def run_mesoscale_simulation(self, job_id: str) -> Dict[str, Any]:
     """
-    Run mesoscale simulation (molecular dynamics, phase field, etc.).
+    Run mesoscale simulation (molecular dynamics via LAMMPS).
+
+    Supports workflows:
+    - MD_NVT_LAMMPS: Canonical ensemble molecular dynamics
+    - MD_NPT_LAMMPS: Isothermal-isobaric ensemble
+    - MD_ANNEAL_LAMMPS: Simulated annealing
 
     Args:
         job_id: UUID of the mesoscale simulation job
@@ -904,32 +909,166 @@ def run_mesoscale_simulation(self, job_id: str) -> Dict[str, Any]:
     Returns:
         Dictionary with job results
     """
-    logger.info(f"[Mesoscale Job {job_id}] Starting simulation")
+    from src.api.database import get_sync_db
+    from src.api.models.simulation import SimulationJob, SimulationResult
+    from src.api.models.structure import Structure
+    from backend.common.engines.lammps import LAMMPSEngine
+    import tempfile
+    import shutil
+    from pathlib import Path
 
-    # For now, this is a stub that follows the same pattern as run_simulation_job
-    # In production, this would invoke LAMMPS or other mesoscale engines
+    logger.info(f"[Mesoscale Job {job_id}] Starting LAMMPS simulation")
 
-    # TODO: Implement actual mesoscale simulation execution
     try:
+        # Update job status to RUNNING
         asyncio.run(
             self._update_job_status_async(
                 job_id,
                 "RUNNING",
                 started_at=datetime.utcnow(),
                 worker_id=self.request.id,
-                current_step="Running mesoscale simulation",
+                current_step="Initializing LAMMPS engine",
             )
         )
 
-        # Simulate work
-        time.sleep(2)
+        # Get job and structure from database (sync)
+        with get_sync_db() as db:
+            job = db.query(SimulationJob).filter(SimulationJob.id == job_id).first()
 
+            if not job:
+                raise ValueError(f"Job {job_id} not found")
+
+            structure = None
+            if job.structure_id:
+                structure = db.query(Structure).filter(
+                    Structure.id == job.structure_id
+                ).first()
+
+        if not structure:
+            raise ValueError("Structure required for LAMMPS simulation")
+
+        # Extract parameters
+        parameters = job.parameters or {}
+        workflow_type = parameters.get("workflow_type", "MD_NVT_LAMMPS")
+
+        logger.info(f"[Mesoscale Job {job_id}] Workflow: {workflow_type}")
+
+        # Create temporary work directory
+        with tempfile.TemporaryDirectory() as work_dir_str:
+            work_dir = Path(work_dir_str)
+            output_dir = work_dir / "output"
+            output_dir.mkdir(exist_ok=True)
+
+            # Initialize LAMMPS engine
+            engine = LAMMPSEngine()
+
+            # Prepare input files
+            asyncio.run(
+                self._update_job_status_async(
+                    job_id,
+                    "RUNNING",
+                    current_step="Preparing LAMMPS input files",
+                )
+            )
+
+            input_dir = engine.prepare_input(
+                structure=structure,
+                parameters=parameters,
+                work_dir=work_dir
+            )
+
+            logger.info(f"[Mesoscale Job {job_id}] Input files prepared in {input_dir}")
+
+            # Execute LAMMPS
+            asyncio.run(
+                self._update_job_status_async(
+                    job_id,
+                    "RUNNING",
+                    current_step="Running LAMMPS molecular dynamics",
+                    progress=0.3,
+                )
+            )
+
+            timeout = parameters.get("timeout", 3600)  # Default 1 hour
+            execution_result = engine.execute(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                timeout=timeout
+            )
+
+            if not execution_result.success:
+                error_msg = f"LAMMPS execution failed: {execution_result.stderr}"
+                logger.error(f"[Mesoscale Job {job_id}] {error_msg}")
+                raise RuntimeError(error_msg)
+
+            logger.info(f"[Mesoscale Job {job_id}] LAMMPS execution completed")
+
+            # Parse output
+            asyncio.run(
+                self._update_job_status_async(
+                    job_id,
+                    "RUNNING",
+                    current_step="Parsing LAMMPS output",
+                    progress=0.7,
+                )
+            )
+
+            parsed_results = engine.parse_output(output_dir)
+
+            if not parsed_results.get("success"):
+                error_msg = f"Failed to parse LAMMPS output: {parsed_results.get('error')}"
+                logger.error(f"[Mesoscale Job {job_id}] {error_msg}")
+                raise RuntimeError(error_msg)
+
+            logger.info(
+                f"[Mesoscale Job {job_id}] Parsed results: "
+                f"avg_temp={parsed_results.get('avg_temperature', 0):.2f}K, "
+                f"final_energy={parsed_results.get('final_energy', 0):.3f}eV"
+            )
+
+            # Store results in database
+            asyncio.run(
+                self._update_job_status_async(
+                    job_id,
+                    "RUNNING",
+                    current_step="Storing results",
+                    progress=0.9,
+                )
+            )
+
+            with get_sync_db() as db:
+                # Create simulation result
+                result = SimulationResult(
+                    simulation_job_id=job_id,
+                    summary={
+                        "avg_temperature": parsed_results.get("avg_temperature"),
+                        "std_temperature": parsed_results.get("std_temperature"),
+                        "avg_total_energy": parsed_results.get("avg_total_energy"),
+                        "final_energy": parsed_results.get("final_energy"),
+                        "num_md_steps": parsed_results.get("num_steps"),
+                        "workflow_type": workflow_type,
+                    },
+                    convergence_reached=True,  # MD doesn't have convergence in the same sense
+                    quality_score=0.9,  # Placeholder
+                    metadata={
+                        "engine": "LAMMPS",
+                        "md_trajectory_stats": parsed_results.get("md_trajectory_stats", {}),
+                        "lammps_version": "LAMMPS",
+                    }
+                )
+                db.add(result)
+                db.commit()
+
+                logger.info(f"[Mesoscale Job {job_id}] Results stored in database")
+
+        # Mark job as completed
         asyncio.run(
             self._update_job_status_async(
                 job_id,
                 "COMPLETED",
                 finished_at=datetime.utcnow(),
                 current_step="Completed",
+                progress=1.0,
             )
         )
 
@@ -938,7 +1077,10 @@ def run_mesoscale_simulation(self, job_id: str) -> Dict[str, Any]:
         return {
             "job_id": job_id,
             "status": "success",
-            "message": "Mesoscale simulation completed (stub implementation)"
+            "message": "LAMMPS simulation completed",
+            "avg_temperature": parsed_results.get("avg_temperature"),
+            "final_energy": parsed_results.get("final_energy"),
+            "num_steps": parsed_results.get("num_steps"),
         }
 
     except Exception as e:
