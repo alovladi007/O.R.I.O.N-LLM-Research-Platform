@@ -45,8 +45,8 @@ async def init_cache() -> None:
     try:
         # Create connection pool
         connection_pool = ConnectionPool.from_url(
-            settings.REDIS_URL,
-            max_connections=settings.REDIS_MAX_CONNECTIONS,
+            settings.redis_url,
+            max_connections=settings.redis_pool_size,
             decode_responses=False,  # We'll handle encoding ourselves for flexibility
             socket_connect_timeout=5,
             socket_keepalive=True,
@@ -346,3 +346,311 @@ async def extend_session(session_id: str, ttl: int = 3600) -> bool:
         return await redis_client.expire(key, ttl)
     except RedisError:
         return False
+
+
+# ========== Advanced Caching Decorators ==========
+
+
+from functools import wraps
+from typing import Callable
+import hashlib
+import inspect
+
+
+def cache_key_builder(*args, **kwargs) -> str:
+    """
+    Build cache key from function arguments.
+
+    Creates deterministic key based on function args/kwargs.
+    """
+    key_parts = []
+
+    # Add positional args
+    for arg in args:
+        if hasattr(arg, 'id'):
+            # For objects with IDs (like User, Material, etc.)
+            key_parts.append(str(arg.id))
+        elif isinstance(arg, (str, int, float, bool)):
+            key_parts.append(str(arg))
+        else:
+            # Hash complex objects
+            key_parts.append(hashlib.md5(str(arg).encode()).hexdigest()[:8])
+
+    # Add keyword args (sorted for consistency)
+    for key, value in sorted(kwargs.items()):
+        if hasattr(value, 'id'):
+            key_parts.append(f"{key}={value.id}")
+        elif isinstance(value, (str, int, float, bool)):
+            key_parts.append(f"{key}={value}")
+        else:
+            key_parts.append(f"{key}={hashlib.md5(str(value).encode()).hexdigest()[:8]}")
+
+    return ":".join(key_parts)
+
+
+def cached(
+    key_prefix: str,
+    ttl: int = 300,
+    key_builder: Optional[Callable] = None
+):
+    """
+    Decorator for caching function results.
+
+    Usage:
+        @cached(key_prefix="material", ttl=600)
+        async def get_material(material_id: str):
+            # Expensive operation
+            return result
+
+    Args:
+        key_prefix: Prefix for cache key
+        ttl: Time-to-live in seconds (default 5 minutes)
+        key_builder: Custom key builder function (optional)
+    """
+    def decorator(func: Callable):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Skip caching if Redis unavailable
+            if not redis_client:
+                return await func(*args, **kwargs)
+
+            # Build cache key
+            if key_builder:
+                key_suffix = key_builder(*args, **kwargs)
+            else:
+                key_suffix = cache_key_builder(*args, **kwargs)
+
+            cache_key = f"{key_prefix}:{key_suffix}"
+
+            # Try to get from cache
+            cached_value = await cache_get(cache_key)
+            if cached_value is not None:
+                logger.debug(f"Cache HIT for key: {cache_key}")
+                return cached_value
+
+            # Cache miss - execute function
+            logger.debug(f"Cache MISS for key: {cache_key}")
+            result = await func(*args, **kwargs)
+
+            # Store in cache
+            await cache_set(cache_key, result, ttl=ttl)
+
+            return result
+
+        return wrapper
+    return decorator
+
+
+def invalidate_cache_on_change(patterns: list[str]):
+    """
+    Decorator to invalidate cache keys on data changes.
+
+    Usage:
+        @invalidate_cache_on_change(["material:*", "structure:*"])
+        async def update_material(material_id: str, data: dict):
+            # Update operation
+            return result
+
+    Args:
+        patterns: List of Redis key patterns to invalidate
+    """
+    def decorator(func: Callable):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Execute function first
+            result = await func(*args, **kwargs)
+
+            # Invalidate cache patterns
+            if redis_client:
+                for pattern in patterns:
+                    deleted = await cache_delete_pattern(pattern)
+                    logger.debug(f"Invalidated {deleted} keys matching '{pattern}'")
+
+            return result
+
+        return wrapper
+    return decorator
+
+
+# ========== Domain-Specific Cache Helpers ==========
+
+
+class CacheNamespace:
+    """Cache key namespaces for different domains"""
+    STRUCTURE = "structure"
+    MATERIAL = "material"
+    SIMULATION = "simulation"
+    ML_PREDICTION = "ml_prediction"
+    ML_TRAINING = "ml_training"
+    CAMPAIGN = "campaign"
+    USER = "user"
+    WORKFLOW = "workflow"
+
+
+async def cache_structure(structure_id: str, data: dict, ttl: int = 600) -> bool:
+    """Cache structure data"""
+    key = f"{CacheNamespace.STRUCTURE}:{structure_id}"
+    return await cache_set(key, data, ttl=ttl)
+
+
+async def get_cached_structure(structure_id: str) -> Optional[dict]:
+    """Get cached structure data"""
+    key = f"{CacheNamespace.STRUCTURE}:{structure_id}"
+    return await cache_get(key)
+
+
+async def invalidate_structure_cache(structure_id: str) -> bool:
+    """Invalidate all cache for a structure"""
+    pattern = f"{CacheNamespace.STRUCTURE}:{structure_id}*"
+    deleted = await cache_delete_pattern(pattern)
+    return deleted > 0
+
+
+async def cache_material(material_id: str, data: dict, ttl: int = 600) -> bool:
+    """Cache material data"""
+    key = f"{CacheNamespace.MATERIAL}:{material_id}"
+    return await cache_set(key, data, ttl=ttl)
+
+
+async def get_cached_material(material_id: str) -> Optional[dict]:
+    """Get cached material data"""
+    key = f"{CacheNamespace.MATERIAL}:{material_id}"
+    return await cache_get(key)
+
+
+async def invalidate_material_cache(material_id: str) -> bool:
+    """Invalidate all cache for a material"""
+    pattern = f"{CacheNamespace.MATERIAL}:{material_id}*"
+    deleted = await cache_delete_pattern(pattern)
+    return deleted > 0
+
+
+async def cache_ml_prediction(
+    structure_id: str,
+    model_type: str,
+    target_property: str,
+    prediction: dict,
+    ttl: int = 3600
+) -> bool:
+    """Cache ML prediction result"""
+    key = f"{CacheNamespace.ML_PREDICTION}:{structure_id}:{model_type}:{target_property}"
+    return await cache_set(key, prediction, ttl=ttl)
+
+
+async def get_cached_ml_prediction(
+    structure_id: str,
+    model_type: str,
+    target_property: str
+) -> Optional[dict]:
+    """Get cached ML prediction"""
+    key = f"{CacheNamespace.ML_PREDICTION}:{structure_id}:{model_type}:{target_property}"
+    return await cache_get(key)
+
+
+async def cache_job_status(job_id: str, status_data: dict, ttl: int = 60) -> bool:
+    """Cache job status (short TTL for frequently polled data)"""
+    key = f"job_status:{job_id}"
+    return await cache_set(key, status_data, ttl=ttl)
+
+
+async def get_cached_job_status(job_id: str) -> Optional[dict]:
+    """Get cached job status"""
+    key = f"job_status:{job_id}"
+    return await cache_get(key)
+
+
+async def invalidate_job_status_cache(job_id: str) -> bool:
+    """Invalidate job status cache"""
+    key = f"job_status:{job_id}"
+    return await cache_delete(key)
+
+
+# ========== Rate Limiting ==========
+
+
+async def check_rate_limit(
+    identifier: str,
+    max_requests: int = 100,
+    window_seconds: int = 60
+) -> tuple[bool, int]:
+    """
+    Check if identifier has exceeded rate limit.
+
+    Args:
+        identifier: Unique identifier (e.g., user_id, IP address)
+        max_requests: Maximum requests allowed in window
+        window_seconds: Time window in seconds
+
+    Returns:
+        (is_allowed: bool, requests_remaining: int)
+    """
+    if not redis_client:
+        return True, max_requests
+
+    try:
+        key = f"rate_limit:{identifier}"
+
+        # Increment counter
+        count = await redis_client.incr(key)
+
+        # Set expiry on first request
+        if count == 1:
+            await redis_client.expire(key, window_seconds)
+
+        # Check if limit exceeded
+        if count > max_requests:
+            return False, 0
+
+        return True, max_requests - count
+
+    except RedisError as e:
+        logger.warning(f"Rate limit check failed: {e}")
+        # Fail open (allow request) if cache unavailable
+        return True, max_requests
+
+
+async def reset_rate_limit(identifier: str) -> bool:
+    """Reset rate limit counter for identifier"""
+    key = f"rate_limit:{identifier}"
+    return await cache_delete(key)
+
+
+# ========== Cache Statistics ==========
+
+
+async def get_cache_stats() -> dict:
+    """
+    Get cache statistics for monitoring.
+
+    Returns:
+        dict with cache hit/miss rates, key counts by namespace, etc.
+    """
+    if not redis_client:
+        return {"error": "Cache not available"}
+
+    try:
+        stats = {
+            "total_keys": await redis_client.dbsize(),
+            "memory_stats": await redis_client.info("memory"),
+            "namespaces": {}
+        }
+
+        # Count keys by namespace
+        for namespace in [
+            CacheNamespace.STRUCTURE,
+            CacheNamespace.MATERIAL,
+            CacheNamespace.SIMULATION,
+            CacheNamespace.ML_PREDICTION,
+            CacheNamespace.ML_TRAINING,
+            CacheNamespace.CAMPAIGN,
+        ]:
+            count = 0
+            async for _ in redis_client.scan_iter(match=f"{namespace}:*", count=100):
+                count += 1
+            stats["namespaces"][namespace] = count
+
+        return stats
+
+    except RedisError as e:
+        logger.error(f"Failed to get cache stats: {e}")
+        return {"error": str(e)}

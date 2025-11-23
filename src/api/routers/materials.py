@@ -28,6 +28,12 @@ from ..schemas.material import (
 from ..auth.security import get_current_active_user
 from ..exceptions import NotFoundError, ConflictError, ValidationError
 from ..config import settings
+from ..cache import (
+    get_cached_material,
+    cache_material,
+    invalidate_material_cache,
+    CacheNamespace
+)
 
 logger = logging.getLogger(__name__)
 
@@ -264,9 +270,18 @@ async def get_material(
     db: AsyncSession = Depends(get_db)
 ) -> MaterialResponse:
     """
-    Get material by ID.
+    Get material by ID with Redis caching.
     """
     logger.debug(f"Fetching material: {material_id}")
+
+    # Try to get from cache first
+    cached = await get_cached_material(str(material_id))
+    if cached:
+        logger.debug(f"Cache HIT for material: {material_id}")
+        return MaterialResponse(**cached)
+
+    # Cache miss - query database
+    logger.debug(f"Cache MISS for material: {material_id}")
 
     # Load material with structures
     query = select(Material).where(
@@ -282,7 +297,11 @@ async def get_material(
     if not material:
         raise NotFoundError("Material", material_id)
 
-    return MaterialResponse.model_validate(material)
+    # Convert to response and cache
+    response = MaterialResponse.model_validate(material)
+    await cache_material(str(material_id), response.model_dump(), ttl=600)  # 10 min cache
+
+    return response
 
 
 @router.put(
@@ -311,7 +330,7 @@ async def update_material(
     current_user: User = Depends(get_current_active_user)
 ) -> MaterialResponse:
     """
-    Update material by ID.
+    Update material by ID and invalidate cache.
     """
     logger.info(f"Updating material: {material_id}")
 
@@ -335,6 +354,10 @@ async def update_material(
 
     await db.commit()
     await db.refresh(material)
+
+    # Invalidate cache
+    await invalidate_material_cache(str(material_id))
+    logger.debug(f"Cache invalidated for material: {material_id}")
 
     logger.info(f"Material updated: {material_id}")
 
@@ -365,7 +388,7 @@ async def delete_material(
     current_user: User = Depends(get_current_active_user)
 ) -> None:
     """
-    Soft delete material by ID.
+    Soft delete material by ID and invalidate cache.
     """
     logger.info(f"Deleting material: {material_id}")
 
@@ -383,6 +406,10 @@ async def delete_material(
     material.deleted_at = datetime.utcnow()
 
     await db.commit()
+
+    # Invalidate cache
+    await invalidate_material_cache(str(material_id))
+    logger.debug(f"Cache invalidated for material: {material_id}")
 
     logger.info(f"Material deleted: {material_id}")
 
