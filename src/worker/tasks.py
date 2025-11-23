@@ -834,22 +834,19 @@ def run_orchestrator_step_task(
         Dictionary with orchestrator run results
     """
     from backend.orchestrator import run_orchestrator_step
+    from src.api.database import get_sync_db
 
     logger.info(f"Running orchestrator step (triggered by: {triggered_by})")
 
     try:
-        # Run orchestrator step synchronously with async DB operations
-        async def run_step_async():
-            async with self.get_db_session() as db:
-                run = run_orchestrator_step(
-                    db=db,
-                    orchestrator_id=uuid.UUID(orchestrator_id),
-                    triggered_by=triggered_by,
-                    trigger_context=trigger_context
-                )
-                return run
-
-        run = asyncio.run(run_step_async())
+        # Run orchestrator step with sync DB session
+        with get_sync_db() as db:
+            run = run_orchestrator_step(
+                db=db,
+                orchestrator_id=uuid.UUID(orchestrator_id),
+                triggered_by=triggered_by,
+                trigger_context=trigger_context
+            )
 
         logger.info(
             f"Orchestrator step completed: "

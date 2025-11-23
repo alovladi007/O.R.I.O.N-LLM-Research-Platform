@@ -22,10 +22,11 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
     async_sessionmaker,
 )
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.pool import NullPool, QueuePool
-from sqlalchemy import event, text
+from sqlalchemy import event, text, create_engine, Engine
 import logging
+from contextlib import contextmanager
 
 from .config import settings
 
@@ -37,6 +38,10 @@ Base = declarative_base()
 # Global engine and session factory
 engine: AsyncEngine | None = None
 async_session_factory: async_sessionmaker[AsyncSession] | None = None
+
+# Synchronous engine and session factory for Celery tasks
+sync_engine: Engine | None = None
+sync_session_factory: sessionmaker[Session] | None = None
 
 
 def create_engine_with_pool() -> AsyncEngine:
@@ -70,6 +75,39 @@ def create_engine_with_pool() -> AsyncEngine:
     )
 
 
+def create_sync_engine_with_pool() -> Engine:
+    """
+    Create synchronous SQLAlchemy engine for Celery tasks.
+
+    Uses similar pooling configuration as async engine.
+    """
+    pool_class = NullPool if settings.TESTING else QueuePool
+
+    # Convert async database URL to sync (postgresql+asyncpg -> postgresql+psycopg2)
+    sync_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+
+    engine_args = {
+        "echo": settings.DB_ECHO,
+        "pool_pre_ping": True,
+        "pool_recycle": 3600,
+    }
+
+    if pool_class == QueuePool:
+        engine_args.update({
+            "poolclass": QueuePool,
+            "pool_size": settings.DB_POOL_SIZE,
+            "max_overflow": settings.DB_MAX_OVERFLOW,
+            "pool_timeout": 30,
+        })
+    else:
+        engine_args["poolclass"] = NullPool
+
+    return create_engine(
+        sync_url,
+        **engine_args
+    )
+
+
 async def init_db() -> None:
     """
     Initialize database connection pool.
@@ -77,14 +115,25 @@ async def init_db() -> None:
     Called during FastAPI startup (lifespan context).
     Creates engine, session factory, and optionally creates tables.
     """
-    global engine, async_session_factory
+    global engine, async_session_factory, sync_engine, sync_session_factory
 
     logger.info("Initializing database connection pool...")
 
+    # Initialize async engine and session factory
     engine = create_engine_with_pool()
     async_session_factory = async_sessionmaker(
         engine,
         class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+
+    # Initialize sync engine and session factory for Celery tasks
+    sync_engine = create_sync_engine_with_pool()
+    sync_session_factory = sessionmaker(
+        sync_engine,
+        class_=Session,
         expire_on_commit=False,
         autocommit=False,
         autoflush=False,
@@ -107,7 +156,7 @@ async def init_db() -> None:
             await conn.run_sync(Base.metadata.create_all)
             logger.info("Database tables created/verified")
 
-    logger.info("Database initialization complete")
+    logger.info("Database initialization complete (async + sync)")
 
 
 async def close_db() -> None:
@@ -117,14 +166,21 @@ async def close_db() -> None:
     Called during FastAPI shutdown (lifespan context).
     Properly disposes engine and closes all connections.
     """
-    global engine, async_session_factory
+    global engine, async_session_factory, sync_engine, sync_session_factory
 
     if engine:
         logger.info("Closing database connection pool...")
         await engine.dispose()
         engine = None
         async_session_factory = None
-        logger.info("Database connection pool closed")
+        logger.info("Async database connection pool closed")
+
+    if sync_engine:
+        logger.info("Closing sync database connection pool...")
+        sync_engine.dispose()
+        sync_engine = None
+        sync_session_factory = None
+        logger.info("Sync database connection pool closed")
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -176,6 +232,29 @@ async def get_db_context():
             raise
         finally:
             await session.close()
+
+
+@contextmanager
+def get_sync_db():
+    """
+    Context manager for synchronous database sessions (for Celery tasks).
+
+    Usage:
+        with get_sync_db() as db:
+            result = db.execute(select(Material))
+    """
+    if not sync_session_factory:
+        raise RuntimeError("Sync database not initialized. Call init_db() first.")
+
+    session = sync_session_factory()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 async def check_db_health() -> dict:

@@ -24,7 +24,7 @@ from src.api.schemas.orchestrator import (
     OrchestratorRunResponse,
     OrchestratorRunRequest,
 )
-from src.api.dependencies.auth import get_current_user
+from src.api.auth.security import get_current_user
 from backend.orchestrator import (
     run_orchestrator_step,
     collect_orchestrator_stats,

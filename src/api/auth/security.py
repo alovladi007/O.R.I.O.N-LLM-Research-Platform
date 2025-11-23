@@ -219,6 +219,49 @@ async def get_current_user(
     return user
 
 
+async def get_optional_user(
+    token: Optional[str] = Depends(oauth2_scheme),
+    bearer: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> Optional[User]:
+    """Get the current authenticated user from JWT token, or None if not authenticated"""
+
+    # Try OAuth2 token first
+    if not token and bearer:
+        token = bearer.credentials
+
+    # If no token, return None (anonymous access)
+    if not token:
+        return None
+
+    try:
+        # Decode token
+        payload = SecurityService.decode_token(token)
+
+        # Validate token type
+        if payload.get("type") != "access":
+            return None
+
+        # Extract user info
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            return None
+
+        token_data = TokenData(user_id=user_id)
+
+    except (JWTError, HTTPException):
+        # Invalid token, return None
+        return None
+
+    # Get user from database
+    user = await db.get(User, token_data.user_id)
+
+    if user is None or not user.is_active:
+        return None
+
+    return user
+
+
 async def get_current_active_user(
     current_user: User = Depends(get_current_user)
 ) -> User:

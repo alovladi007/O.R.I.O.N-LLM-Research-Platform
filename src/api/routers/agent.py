@@ -38,7 +38,7 @@ from src.api.schemas.orchestrator import (
     AgentSimulationResponse,
     AgentExperimentResponse,
 )
-from src.api.dependencies.auth import get_current_user, get_optional_user
+from src.api.auth.security import get_current_user, get_optional_user
 
 logger = logging.getLogger(__name__)
 
