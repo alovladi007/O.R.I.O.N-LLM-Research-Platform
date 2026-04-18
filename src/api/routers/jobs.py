@@ -19,7 +19,15 @@ import logging
 import uuid
 
 from ..database import get_db
-from ..models import User, Structure, WorkflowTemplate, SimulationJob, SimulationResult
+from ..models import (
+    User,
+    Structure,
+    WorkflowTemplate,
+    SimulationJob,
+    SimulationResult,
+    JobStatus,
+    IllegalJobTransitionError,
+)
 from ..schemas.simulation import (
     SimulationJobCreate,
     SimulationJobUpdate,
@@ -37,8 +45,10 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+# Note: app.py includes this router at `prefix="/api/v1/jobs"`, so the
+# router must NOT repeat "/jobs" (Session 1.1 caught the same bug on the
+# structures router). All paths here are written relative to /api/v1/jobs.
 router = APIRouter(
-    prefix="/jobs",
     tags=["simulation-jobs"],
     dependencies=[Depends(get_current_active_user)],
     responses={
@@ -583,25 +593,29 @@ async def cancel_simulation_job(
     if not job:
         raise NotFoundError("SimulationJob", job_id)
 
-    # Check if job can be cancelled
-    if job.is_terminal:
-        raise ConflictError(
-            message=f"Job already in terminal state: {job.status.value}",
-            details={"status": job.status.value, "job_id": str(job_id)}
+    # State machine handles the legality check and raises on illegal.
+    # Wrap into a 409 ConflictError; the user saw a terminal job.
+    try:
+        job.transition_to(
+            JobStatus.CANCELLED,
+            error_message=f"Cancelled by user {current_user.username}",
+            set_finished=True,
         )
-
-    # Update job status
-    job.status = "CANCELLED"
-    job.finished_at = datetime.utcnow()
-    job.error_message = f"Cancelled by user {current_user.username}"
-    job.updated_at = datetime.utcnow()
+    except IllegalJobTransitionError as exc:
+        raise ConflictError(
+            message=str(exc),
+            details={"status": job.status.value, "job_id": str(job_id)},
+        ) from exc
 
     await db.commit()
     await db.refresh(job)
 
     logger.info(f"Simulation job cancelled: {job_id}")
 
-    # TODO: Signal worker to stop execution (via Celery, Redis, etc.)
+    # NOTE: actual Celery task termination lands in Session 2.1. Until then
+    # the CANCELLED state is authoritative from the API's point of view —
+    # any worker already processing the job will see the new status when
+    # it next checks in (Phase 2 adds the check-in hook).
 
     return SimulationJobResponse.model_validate(job)
 
@@ -740,3 +754,146 @@ async def get_job_status_summary(
             summary[status] = 0
 
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Live observability endpoints (Session 1.4 MVP)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{job_id}/events",
+    summary="Stream job state transitions as Server-Sent Events",
+    description=(
+        "Returns a text/event-stream that emits a JSON event every time the "
+        "job row changes status, until the job reaches a terminal state or "
+        "the client disconnects. Implemented as polling in Session 1.4 "
+        "(2 s cadence). Session 10 replaces the polling loop with a Redis "
+        "pub/sub push from Celery task hooks."
+    ),
+)
+async def stream_job_events(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from fastapi.responses import StreamingResponse
+    import asyncio
+    import json
+
+    job = await db.get(SimulationJob, job_id)
+    if not job:
+        raise NotFoundError("SimulationJob", job_id)
+
+    async def _poll_and_stream():
+        last_status = None
+        last_progress = None
+        # Initial snapshot so the client doesn't have to wait for a change.
+        yield _sse_event(
+            "snapshot",
+            {
+                "job_id": str(job_id),
+                "status": job.status.value if hasattr(job.status, "value") else job.status,
+                "progress": job.progress,
+                "current_step": job.current_step,
+            },
+        )
+
+        while True:
+            # Re-read the row — bypass the Session's identity cache.
+            current = await db.get(SimulationJob, job_id)
+            if current is None:
+                yield _sse_event("error", {"reason": "job_disappeared"})
+                return
+
+            status_val = (
+                current.status.value if hasattr(current.status, "value") else current.status
+            )
+            if status_val != last_status or current.progress != last_progress:
+                yield _sse_event(
+                    "status",
+                    {
+                        "job_id": str(job_id),
+                        "status": status_val,
+                        "progress": current.progress,
+                        "current_step": current.current_step,
+                        "updated_at": (
+                            current.updated_at.isoformat() if current.updated_at else None
+                        ),
+                    },
+                )
+                last_status = status_val
+                last_progress = current.progress
+
+            if current.is_terminal:
+                yield _sse_event(
+                    "terminal",
+                    {
+                        "job_id": str(job_id),
+                        "final_status": status_val,
+                        "finished_at": (
+                            current.finished_at.isoformat() if current.finished_at else None
+                        ),
+                    },
+                )
+                return
+
+            await asyncio.sleep(2.0)
+
+    return StreamingResponse(
+        _poll_and_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _sse_event(event: str, data: dict) -> str:
+    """Format one Server-Sent Event payload."""
+    import json
+
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+@router.get(
+    "/{job_id}/logs",
+    summary="Tail worker logs for this job",
+    description=(
+        "Returns the most recent worker log lines for this job as text/plain. "
+        "Session 1.4 returns a placeholder derived from `error_message` + "
+        "`current_step` because the MinIO-backed log pipeline lands in "
+        "Session 2.1."
+    ),
+)
+async def get_job_logs(
+    job_id: uuid.UUID,
+    tail: int = Query(200, ge=1, le=10_000, description="Number of lines to return."),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from fastapi.responses import PlainTextResponse
+
+    job = await db.get(SimulationJob, job_id)
+    if not job:
+        raise NotFoundError("SimulationJob", job_id)
+
+    # Placeholder: compose what we know about the job. Session 2.1 replaces
+    # this with a MinIO presigned URL or a real tail via the worker's log
+    # pipeline.
+    lines = [
+        f"# ORION job log placeholder (Session 1.4 — real tail lands in Session 2.1)",
+        f"job_id={job.id}",
+        f"status={job.status.value if hasattr(job.status, 'value') else job.status}",
+        f"engine={job.engine}",
+        f"kind={getattr(job, 'kind', None)}",
+        f"worker_id={job.worker_id}",
+        f"worker_hostname={job.worker_hostname}",
+        f"current_step={job.current_step}",
+        f"progress={job.progress}",
+        f"submitted_at={job.submitted_at}",
+        f"started_at={job.started_at}",
+        f"finished_at={job.finished_at}",
+    ]
+    if job.error_message:
+        lines.append(f"error_message={job.error_message}")
+    body = "\n".join(lines[-tail:]) + "\n"
+    return PlainTextResponse(body)

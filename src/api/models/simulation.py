@@ -31,6 +31,96 @@ class JobStatus(str, enum.Enum):
     TIMEOUT = "TIMEOUT"       # Exceeded time limit
 
 
+class JobKind(str, enum.Enum):
+    """
+    Semantic kind of work the job is doing, independent of the engine.
+    Added in Session 1.4. The existing ``engine`` column says *which*
+    physics package (qe / lammps / mock / ...); ``kind`` says *what*
+    the job is attempting.
+    """
+    MOCK_STATIC = "mock_static"
+    DFT_RELAX = "dft_relax"
+    DFT_STATIC = "dft_static"
+    DFT_BANDS = "dft_bands"
+    DFT_DOS = "dft_dos"
+    MD_NVT = "md_nvt"
+    MD_NPT = "md_npt"
+    MD_NVE = "md_nve"
+    CONTINUUM_ELASTIC = "continuum_elastic"
+    CONTINUUM_THERMAL = "continuum_thermal"
+    MESOSCALE_KMC = "mesoscale_kmc"
+    ML_TRAIN = "ml_train"
+    ML_INFER = "ml_infer"
+    BO_SUGGEST = "bo_suggest"
+    AL_QUERY = "al_query"
+    IMPORT = "import"
+    EXPORT = "export"
+    AGENT_STEP = "agent_step"
+
+
+# State machine: keys are the source state, values are the set of legal
+# destination states. COMPLETED / FAILED / CANCELLED / TIMEOUT are terminal
+# (empty transition set).
+_LEGAL_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
+    JobStatus.PENDING: {JobStatus.QUEUED, JobStatus.CANCELLED, JobStatus.FAILED},
+    JobStatus.QUEUED: {JobStatus.RUNNING, JobStatus.CANCELLED, JobStatus.FAILED},
+    JobStatus.RUNNING: {
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+        JobStatus.CANCELLED,
+        JobStatus.TIMEOUT,
+    },
+    # Terminal states: nothing legal after.
+    JobStatus.COMPLETED: set(),
+    JobStatus.FAILED: set(),
+    JobStatus.CANCELLED: set(),
+    JobStatus.TIMEOUT: set(),
+}
+
+
+class IllegalJobTransitionError(Exception):
+    """Raised when :meth:`SimulationJob.transition_to` is called with an illegal target."""
+
+    def __init__(self, current: JobStatus, target: JobStatus):
+        self.current = current
+        self.target = target
+        super().__init__(
+            f"Illegal job transition {current.value} → {target.value}. "
+            f"Legal from {current.value}: "
+            f"{sorted(s.value for s in _LEGAL_TRANSITIONS.get(current, set()))}"
+        )
+
+
+def check_transition(current: "JobStatus", target: "JobStatus") -> "JobStatus":
+    """
+    Validate a state transition and return the normalized target enum.
+
+    Pure function (no model instance needed). Raises
+    :class:`IllegalJobTransitionError` on illegal moves. Lets unit tests
+    exercise the state machine without constructing SQLAlchemy objects.
+    """
+    if isinstance(current, str):
+        current = JobStatus(current)
+    if isinstance(target, str):
+        target = JobStatus(target)
+    allowed = _LEGAL_TRANSITIONS.get(current, set())
+    if target not in allowed:
+        raise IllegalJobTransitionError(current=current, target=target)
+    return target
+
+
+def is_terminal_status(status: "JobStatus") -> bool:
+    """Whether `status` is one of the four terminal states."""
+    if isinstance(status, str):
+        status = JobStatus(status)
+    return status in (
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+        JobStatus.CANCELLED,
+        JobStatus.TIMEOUT,
+    )
+
+
 class JobPriority(int, enum.Enum):
     """Job priority levels."""
     LOW = 0
@@ -108,6 +198,15 @@ class SimulationJob(Base):
         String(50),
         nullable=False,
         comment="Resolved engine for this job (from template)"
+    )
+    # Semantic kind of work — independent of the engine. Session 1.4.
+    # Nullable for backwards compatibility with pre-1.4 rows; the router
+    # requires it on new submissions via the schema.
+    kind: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        index=True,
+        comment="Semantic kind: dft_relax, md_nvt, ml_train, ... (see JobKind).",
     )
     parameters: Mapped[dict] = mapped_column(
         JSON,
@@ -259,6 +358,45 @@ class SimulationJob(Base):
     def is_running_or_queued(self) -> bool:
         """Check if job is currently active."""
         return self.status in [JobStatus.QUEUED, JobStatus.RUNNING]
+
+    # -----------------------------------------------------------------
+    # State machine (Session 1.4)
+    # -----------------------------------------------------------------
+    def transition_to(
+        self,
+        target: "JobStatus",
+        *,
+        error_message: Optional[str] = None,
+        set_started: bool = False,
+        set_finished: bool = False,
+    ) -> "JobStatus":
+        """
+        Attempt to move the job to ``target``. Raises
+        :class:`IllegalJobTransitionError` when the move violates the
+        state machine defined in :data:`_LEGAL_TRANSITIONS`.
+
+        Side effects on success:
+
+        - ``self.status`` = target
+        - ``self.updated_at`` = now
+        - optionally ``self.started_at`` / ``self.finished_at`` per flags
+        - ``self.error_message`` set when provided (typically on FAILED /
+          CANCELLED / TIMEOUT)
+
+        Delegates the legality check to :func:`check_transition` so the
+        logic is unit-testable without constructing SQLAlchemy instances.
+        """
+        normalized = check_transition(self.status, target)
+        now = datetime.utcnow()
+        self.status = normalized
+        self.updated_at = now
+        if set_started and self.started_at is None:
+            self.started_at = now
+        if set_finished and self.finished_at is None:
+            self.finished_at = now
+        if error_message is not None:
+            self.error_message = error_message
+        return normalized
 
 
 class SimulationResult(Base):

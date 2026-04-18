@@ -22,7 +22,14 @@ from .structure_features import StructureFeatures
 from .ml_model_registry import MLModelRegistry
 from .ml_potential import MLPotential
 from .workflow import WorkflowTemplate
-from .simulation import SimulationJob, SimulationResult
+from .simulation import (
+    SimulationJob,
+    SimulationResult,
+    JobStatus,
+    JobKind,
+    JobPriority,
+    IllegalJobTransitionError,
+)
 from .embedding import VectorEmbedding
 from .predicted_properties import PredictedProperties
 from .provenance import ProvenanceRecord, EntityType, EventType
@@ -60,6 +67,10 @@ __all__ = [
     "WorkflowTemplate",
     "SimulationJob",
     "SimulationResult",
+    "JobStatus",
+    "JobKind",
+    "JobPriority",
+    "IllegalJobTransitionError",
     "VectorEmbedding",
     "PredictedProperties",
     "ProvenanceRecord",
