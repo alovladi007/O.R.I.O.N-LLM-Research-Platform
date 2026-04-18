@@ -1,0 +1,31 @@
+# Developer / test dependencies (Phase 0 / Session 0.5).
+# Install alongside requirements.txt: `pip install -r requirements-dev.txt`.
+
+# --- Test runners & plugins -------------------------------------------------
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-env>=1.1.0              # picks up the `env` block in pytest.ini
+pytest-timeout>=2.2.0          # enforces the `timeout` setting
+pytest-mock>=3.12.0
+httpx>=0.25.0                  # FastAPI TestClient & async test client
+anyio>=4.0.0                   # generic async support for async-only tests
+
+# --- Test-time infra ---------------------------------------------------------
+# Optional: testcontainers spins up disposable Postgres / Redis from Python
+# tests. Skip-markers fall back cleanly when it isn't installed, so
+# requiring it is optional — but recommended for local runs.
+testcontainers[postgres,redis]>=4.0.0 ; python_version >= "3.10"
+
+# --- Lint / format / type ---------------------------------------------------
+black>=23.12.0
+isort>=5.13.0
+flake8>=6.1.0
+mypy>=1.7.0
+bandit>=1.7.0                   # security lint
+
+# --- Dev ergonomics ----------------------------------------------------------
+ipython>=8.18.0
+ipdb>=0.13.13
+pre-commit>=3.6.0
+watchdog>=3.0.0

@@ -1,0 +1,120 @@
+name: tests
+
+# Minimal CI baseline (Phase 0 / Session 0.5).
+#
+# The previous aspirational pipeline (staging / prod deploy, trivy, snyk,
+# k6, etc.) was stashed at ci-cd.yml.disabled-until-phase-13 and will be
+# revived — correctly — in Phase 13 once the deployment targets exist.
+# The full security audit lives in security.yml.disabled-until-phase-11.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # Codebase still has pre-refactor style issues
+                             # that Phase 0.5 intentionally does not fix.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Black (check only, app code)
+        run: black --check src/ tests/ || true
+
+      - name: isort (check only, app code)
+        run: isort --check-only src/ tests/ || true
+
+      - name: Flake8 (app code)
+        run: flake8 src/ tests/ --max-line-length=120 --extend-ignore=E203,W503 || true
+
+  tests:
+    name: Unit & integration tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10"]
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: orion
+          POSTGRES_PASSWORD: test_password_not_real
+          POSTGRES_DB: orion_test
+        options: >-
+          --health-cmd "pg_isready -U orion -d orion_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install project deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run smoke / unit / integration tests
+        env:
+          # pytest.ini already sets safe defaults; these just point at the
+          # CI service containers.
+          DATABASE_URL: postgresql+asyncpg://orion:test_password_not_real@localhost:5432/orion_test
+          REDIS_URL: redis://localhost:6379/1
+        run: |
+          pytest -m "not slow and not requires_engines and not requires_gpu and not requires_slurm" \
+                 --cov-report=xml \
+                 --cov-report=term-missing:skip-covered
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
+          retention-days: 14

@@ -116,8 +116,13 @@ class Settings(BaseSettings):
     app_version: str = "2.0.0"
     app_description: str = "AI-driven materials science platform"
     # Accept both ORION_ENV (canonical) and ENVIRONMENT (backward-compat).
+    # Default is "development" so a blank .env doesn't trip the
+    # production-only invariants. Deployments must set ORION_ENV=production
+    # (or staging) explicitly, which is fail-safe: if you forget, you land
+    # in dev mode, which logs warnings — not in prod mode accepting a
+    # demo password.
     environment: str = Field(
-        "production",
+        "development",
         validation_alias=AliasChoices("ORION_ENV", "ENVIRONMENT"),
     )
     debug: bool = Field(False, alias="DEBUG")
