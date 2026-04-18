@@ -876,3 +876,77 @@ def run_orchestrator_step_task(
             raise self.retry(exc=e, countdown=retry_delay)
         else:
             raise
+
+
+# ---------------------------------------------------------------------------
+# Reaper — Session 2.1
+# ---------------------------------------------------------------------------
+
+
+def _reap_stalled_sync(stall_seconds: int) -> Dict[str, Any]:
+    """
+    Sync implementation of the stalled-job reaper. Split out for tests.
+
+    Finds jobs whose ``status == RUNNING`` and ``updated_at`` is older
+    than ``stall_seconds`` ago, and transitions them to FAILED with
+    reason ``worker_lost``. Uses a sync engine so the Celery task (sync
+    entrypoint) can run it without spinning up an event loop.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    from src.api.config import settings
+    from src.api.models.simulation import (
+        IllegalJobTransitionError,
+        JobStatus,
+        SimulationJob,
+    )
+
+    # async → sync URL (strip +asyncpg driver).
+    sync_url = settings.database_url.replace("+asyncpg", "")
+    engine = create_engine(sync_url, pool_pre_ping=True, future=True)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=stall_seconds)
+    reaped: list[str] = []
+    errors: list[str] = []
+
+    with Session(engine, expire_on_commit=False) as session:
+        stmt = select(SimulationJob).where(
+            SimulationJob.status == JobStatus.RUNNING,
+            SimulationJob.updated_at < cutoff,
+        )
+        for job in session.execute(stmt).scalars().all():
+            try:
+                job.transition_to(
+                    JobStatus.FAILED,
+                    set_finished=True,
+                    error_message=f"worker_lost: no heartbeat in ≥{stall_seconds}s",
+                )
+                reaped.append(str(job.id))
+            except IllegalJobTransitionError as exc:
+                errors.append(f"{job.id}: {exc}")
+        session.commit()
+
+    engine.dispose()
+    return {"reaped": reaped, "errors": errors}
+
+
+@celery_app.task(name="orion.io.reap_stalled_jobs", bind=True, ignore_result=False)
+def reap_stalled_jobs(self, stall_seconds: int = 120) -> Dict[str, Any]:
+    """
+    Scan for RUNNING jobs whose last update is older than *stall_seconds*
+    and flip them to FAILED(reason=worker_lost).
+
+    Wired as a beat-scheduled task in :mod:`src.worker.celery_app`;
+    runs every 60 s by default.
+    """
+    try:
+        result = _reap_stalled_sync(stall_seconds)
+        if result["reaped"]:
+            logger.warning("reaped %d stalled jobs: %s", len(result["reaped"]), result["reaped"])
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("reaper failed: %s", exc)
+        return {"reaped": [], "errors": [str(exc)]}

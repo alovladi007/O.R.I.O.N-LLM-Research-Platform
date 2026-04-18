@@ -13,10 +13,43 @@ This ensures a consistent interface across all simulation backends.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Callable
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ExecutionResult:
+    """
+    Return value from a raw engine subprocess invocation.
+
+    Engines (LAMMPS / QE / custom) produce these from their
+    ``run_subprocess``-style helpers. Higher layers (the Celery task
+    base class in Phase 2) inspect ``success`` to decide state-machine
+    transitions and ``stdout`` / ``stderr`` for log capture.
+
+    ``returncode == 0`` ≙ ``success``, but we keep both for tools that
+    differentiate "ran, exited clean, output parsed as a failure" from
+    "exited with non-zero code". ``timed_out`` is True only when the
+    engine wrapper hit its wall-clock limit.
+    """
+
+    success: bool
+    returncode: int
+    stdout: str = ""
+    stderr: str = ""
+    timed_out: bool = False
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "success": self.success,
+            "returncode": self.returncode,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "timed_out": self.timed_out,
+        }
 
 
 class SimulationEngine(ABC):

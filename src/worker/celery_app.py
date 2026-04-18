@@ -1,77 +1,100 @@
 """
-Celery Application Configuration
-=================================
+Celery application configuration (Phase 2 / Session 2.1).
 
-Production-ready Celery setup with:
-- Redis as broker and result backend
-- Task routing and queues
-- JSON serialization
-- Comprehensive logging
-- Error handling and retries
+Queue layout, per roadmap:
+
+- ``default``  — catch-all, short-running work (orchestrator ticks, IO)
+- ``io``       — bulk-import chunks, artifact uploads, notifications
+- ``dft``      — long-running DFT runs; 1 concurrency/worker recommended
+- ``md``       — molecular dynamics (LAMMPS); CPU or GPU
+- ``ml``       — ML training / inference; GPU when available
+
+Routing is by task name: tasks registered under ``orion.dft.*`` go to
+the ``dft`` queue, ``orion.md.*`` → ``md``, ``orion.ml.*`` → ``ml``,
+``orion.io.*`` → ``io``. The legacy ``src.worker.tasks.run_*`` names
+keep working via explicit entries in ``task_routes``.
 """
 
 import logging
+
 from celery import Celery
-from celery.signals import task_prerun, task_postrun, task_failure
-from kombu import Queue, Exchange
+from celery.signals import task_failure, task_postrun, task_prerun
+from kombu import Exchange, Queue
 
 from src.api.config import settings
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
-# Create Celery application
 celery_app = Celery(
-    "nano_os_worker",
+    "orion_worker",
     broker=settings.redis_url,
     backend=settings.redis_url,
 )
 
-# Celery configuration
+
+def _build_beat_schedule() -> dict:
+    """Assemble the Celery beat schedule based on feature flags."""
+    import os
+
+    schedule: dict = {
+        # Reaper: find jobs stuck in RUNNING past their stall timeout and
+        # transition them to FAILED(reason="worker_lost"). Every minute.
+        "orion.reaper.stalled-jobs": {
+            "task": "orion.io.reap_stalled_jobs",
+            "schedule": 60.0,
+        },
+    }
+    if os.getenv("ORION_ENABLE_ORCHESTRATOR_BEAT", "").lower() == "true":
+        schedule["orion.orchestrator.tick"] = {
+            "task": "run_orchestrator_step_task",
+            "schedule": 3600.0,
+            "args": ("default", "scheduler"),
+        }
+    return schedule
+
+
 celery_app.conf.update(
-    # Task execution
+    # Serialization
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
 
-    # Task results
-    result_expires=3600,  # Results expire after 1 hour
+    # Results
+    result_expires=3600,
     result_backend_transport_options={
         "master_name": "mymaster",
         "retry_on_timeout": True,
     },
 
-    # Task routing
+    # Queue layout (roadmap 2.1).
     task_default_queue="default",
     task_default_exchange="tasks",
     task_default_routing_key="task.default",
-
-    # Task queues
     task_queues=(
-        Queue(
-            "default",
-            Exchange("tasks"),
-            routing_key="task.default",
-            queue_arguments={"x-max-priority": 10},
-        ),
-        Queue(
-            "simulations",
-            Exchange("simulations"),
-            routing_key="simulation.#",
-            queue_arguments={"x-max-priority": 20},
-        ),
-        Queue(
-            "high_priority",
-            Exchange("tasks"),
-            routing_key="task.high",
-            queue_arguments={"x-max-priority": 20},
-        ),
+        Queue("default", Exchange("tasks"), routing_key="task.default",
+              queue_arguments={"x-max-priority": 10}),
+        Queue("io", Exchange("tasks"), routing_key="task.io",
+              queue_arguments={"x-max-priority": 10}),
+        Queue("dft", Exchange("tasks"), routing_key="task.dft",
+              queue_arguments={"x-max-priority": 20}),
+        Queue("md", Exchange("tasks"), routing_key="task.md",
+              queue_arguments={"x-max-priority": 20}),
+        Queue("ml", Exchange("tasks"), routing_key="task.ml",
+              queue_arguments={"x-max-priority": 20}),
+        # Back-compat — retained until Session 2.2 migrates callers.
+        Queue("simulations", Exchange("simulations"), routing_key="simulation.#",
+              queue_arguments={"x-max-priority": 20}),
     ),
 
-    # Task routes
+    # Name-prefix routing. ``orion.dft.*`` → ``dft`` queue, etc.
     task_routes={
+        "orion.dft.*": {"queue": "dft", "routing_key": "task.dft"},
+        "orion.md.*": {"queue": "md", "routing_key": "task.md"},
+        "orion.ml.*": {"queue": "ml", "routing_key": "task.ml"},
+        "orion.io.*": {"queue": "io", "routing_key": "task.io"},
+        # Back-compat explicit routes.
         "src.worker.tasks.run_simulation_job": {
             "queue": "simulations",
             "routing_key": "simulation.run",
@@ -118,20 +141,10 @@ celery_app.conf.update(
     result_backend_always_retry=True,
     result_backend_max_retries=10,
 
-    # Beat schedule (for periodic tasks)
-    beat_schedule={
-        # Run orchestrator every hour
-        "run-orchestrator-hourly": {
-            "task": "run_orchestrator_step_task",
-            "schedule": 3600.0,  # Every hour (in seconds)
-            "args": ("default", "scheduler"),
-        },
-        # Example: Clean up old results every day
-        # "cleanup-old-results": {
-        #     "task": "src.worker.tasks.cleanup_old_results",
-        #     "schedule": crontab(hour=3, minute=0),
-        # },
-    },
+    # Beat schedule (periodic tasks). Off by default — Session 7 (agent
+    # loop) opts in via ORION_ENABLE_ORCHESTRATOR_BEAT=true. The reaper
+    # for stalled jobs is on; it's pure-API work and doesn't need engines.
+    beat_schedule=_build_beat_schedule(),
 )
 
 # Auto-discover tasks from tasks.py
