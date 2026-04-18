@@ -23,7 +23,7 @@ from ..schemas.design import (
     DesignSearchResponse,
     CandidateStructure,
 )
-from ...backend.common.design import (
+from backend.common.design import (
     search_existing_structures,
     calculate_candidate_score,
     generate_structure_variants,

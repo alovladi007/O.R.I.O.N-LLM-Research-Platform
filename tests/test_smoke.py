@@ -245,15 +245,35 @@ class TestRepoLayout:
 
 
 # ---------------------------------------------------------------------------
-# Placeholder: the canonical app's health endpoint will land here after 1.2.
+# Canonical app health check — enabled in Session 1.2 once the model
+# package imports cleanly. Uses FastAPI's in-process TestClient so we
+# don't depend on Postgres/Redis being reachable for the smoke test.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="Canonical src.api.app import blocked by stale src/api/models/__init__ "
-    "references (Session 1.2 resolves this)."
-)
-def test_health_endpoint_returns_200():
-    from src.api.app import app  # noqa: F401 — will raise until 1.2
+def test_canonical_app_imports():
+    """The canonical FastAPI app must import with all routers registered."""
+    from src.api.app import app
 
-    assert False, "If this test passes unexpectedly, Session 1.2 may be complete."
+    assert app.title == "ORION Platform API"
+    # At least the core routers from Session 0.1 audit.
+    registered = {r.path for r in app.routes}
+    # Spot-check a few canonical paths.
+    assert any(p.startswith("/api/v1") for p in registered), registered
+    assert any(p in ("/", "/health", "/healthz") for p in registered)
+
+
+def test_health_endpoint_returns_200():
+    """
+    Hits the app in-process via FastAPI's TestClient. No DB or Redis
+    required for /health itself — the route is synchronous by design.
+    """
+    from fastapi.testclient import TestClient
+
+    from src.api.app import app
+
+    client = TestClient(app)
+    response = client.get("/health")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body.get("status") in {"ok", "healthy", "up"} or "status" in body

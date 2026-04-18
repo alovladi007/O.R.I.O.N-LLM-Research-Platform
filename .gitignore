@@ -166,8 +166,11 @@ credentials/
 *.ipynb
 
 # ML/Data files
-data/
-models/
+/data/
+# `/models/` = trained ML artefacts at repo root; NOT src/api/models/ (that's
+# the SQLAlchemy models package, which must stay tracked). The leading slash
+# anchors this to the repo root.
+/models/
 *.h5
 *.pkl
 *.pickle

@@ -8,10 +8,12 @@ from .core import (
     run_orchestrator_step,
     collect_orchestrator_stats,
     get_default_config,
+    get_or_create_orchestrator,
 )
 
 __all__ = [
     "run_orchestrator_step",
     "collect_orchestrator_stats",
     "get_default_config",
+    "get_or_create_orchestrator",
 ]

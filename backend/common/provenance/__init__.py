@@ -14,6 +14,7 @@ Key features:
 from .tracker import (
     record_provenance,
     get_provenance_chain,
+    get_provenance_summary,
     get_system_info,
     get_code_version,
 )
@@ -21,6 +22,7 @@ from .tracker import (
 __all__ = [
     "record_provenance",
     "get_provenance_chain",
+    "get_provenance_summary",
     "get_system_info",
     "get_code_version",
 ]

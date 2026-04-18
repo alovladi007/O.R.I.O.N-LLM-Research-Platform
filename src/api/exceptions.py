@@ -289,3 +289,15 @@ def register_exception_handlers(app):
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
+
+
+# ---------------------------------------------------------------------------
+# ORION-branded aliases (expected by src.api.app).
+# The legacy NANOOS* names above are preserved for backward compatibility;
+# new code should use the ORION* aliases.
+# ---------------------------------------------------------------------------
+ORIONAPIException = NANOOSException
+handle_orion_exception = nanoos_exception_handler
+handle_http_exception = http_exception_handler
+handle_validation_exception = validation_exception_handler
+handle_generic_exception = generic_exception_handler

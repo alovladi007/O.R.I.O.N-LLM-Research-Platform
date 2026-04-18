@@ -16,11 +16,11 @@ from sqlalchemy.orm import selectinload
 import statistics
 import re
 
-from ...api.models.structure import Structure
-from ...api.models.material import Material
-from ...api.models.predicted_properties import PredictedProperties
-from ...api.models.simulation import SimulationResult, SimulationJob, JobStatus
-from ...api.schemas.design import DesignSearchRequest, PropertyConstraint
+from src.api.models.structure import Structure
+from src.api.models.material import Material
+from src.api.models.predicted_properties import PredictedProperties
+from src.api.models.simulation import SimulationResult, SimulationJob, JobStatus
+from src.api.schemas.design import DesignSearchRequest, PropertyConstraint
 
 logger = logging.getLogger(__name__)
 
