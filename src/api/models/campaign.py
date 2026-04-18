@@ -185,8 +185,9 @@ class DesignCampaign(Base):
         comment="When campaign completed or was stopped"
     )
 
-    # Metadata for extensibility
-    metadata: Mapped[Optional[dict]] = mapped_column(
+    # Metadata for extensibility (see notes in material.py on the attribute rename).
+    extra_metadata: Mapped[Optional[dict]] = mapped_column(
+        "metadata",
         JSON,
         nullable=True,
         default=dict,
@@ -236,7 +237,7 @@ class DesignCampaign(Base):
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "duration_seconds": duration,
-            "metadata": self.metadata,
+            "metadata": self.extra_metadata,
         }
 
     @property
@@ -381,8 +382,9 @@ class DesignIteration(Base):
         comment="When iteration completed"
     )
 
-    # Metadata
-    metadata: Mapped[Optional[dict]] = mapped_column(
+    # Metadata (see notes in material.py on the attribute rename).
+    extra_metadata: Mapped[Optional[dict]] = mapped_column(
+        "metadata",
         JSON,
         nullable=True,
         default=dict,
@@ -423,7 +425,7 @@ class DesignIteration(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "duration_seconds": duration,
-            "metadata": self.metadata or {},
+            "metadata": self.extra_metadata or {},
         }
 
     @property

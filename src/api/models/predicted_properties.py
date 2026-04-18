@@ -126,7 +126,8 @@ class PredictedProperties(Base):
     #   "input_features": ["composition", "structure", "volume"],
     #   ...
     # }
-    metadata: Mapped[Optional[dict]] = mapped_column(
+    extra_metadata: Mapped[Optional[dict]] = mapped_column(
+        "metadata",
         JSON,
         nullable=True,
         default=dict,
@@ -185,7 +186,7 @@ class PredictedProperties(Base):
             "model_version": self.model_version,
             "properties": self.properties,
             "confidence_scores": self.confidence_scores,
-            "metadata": self.metadata,
+            "metadata": self.extra_metadata,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

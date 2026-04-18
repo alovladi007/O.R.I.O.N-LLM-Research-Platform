@@ -22,11 +22,11 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from opentelemetry import trace
-from opentelemetry.exporter.jaeger import JaegerExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+# OpenTelemetry imports are deferred into the tracing-enabled branch inside the
+# lifespan. The jaeger thrift exporter path changed across otel versions and
+# forcing the import at module top-time makes the app unimportable when tracing
+# is disabled. See Phase 0 / Session 0.1.
 
 from .config import settings
 from .middleware import (
@@ -92,14 +92,23 @@ async def lifespan(app: FastAPI):
         
         # Initialize tracing if enabled
         if settings.enable_tracing:
+            from opentelemetry import trace
+            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+            try:
+                from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+            except ImportError:  # pragma: no cover
+                from opentelemetry.exporter.jaeger import JaegerExporter  # type: ignore
+
             trace.set_tracer_provider(TracerProvider())
             tracer_provider = trace.get_tracer_provider()
-            
+
             jaeger_exporter = JaegerExporter(
                 agent_host_name=settings.jaeger_host,
                 agent_port=settings.jaeger_port,
             )
-            
+
             span_processor = BatchSpanProcessor(jaeger_exporter)
             tracer_provider.add_span_processor(span_processor)
             logger.info("Tracing initialized")
@@ -271,6 +280,7 @@ def create_app() -> FastAPI:
     
     # Instrument with OpenTelemetry if tracing is enabled
     if settings.enable_tracing:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
         FastAPIInstrumentor.instrument_app(app)
     
     # Root endpoint

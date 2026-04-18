@@ -101,9 +101,9 @@ install: ## Install Python dependencies
 	pip install -r requirements-dev.txt
 	@echo "$(GREEN)Dependencies installed!$(NC)"
 
-dev: ## Run API server in development mode
-	@echo "$(GREEN)Starting development server...$(NC)"
-	uvicorn src.api.app:app --reload --host 0.0.0.0 --port 8000
+dev: ## Run API server in development mode (canonical entry point)
+	@echo "$(GREEN)Starting development server on http://localhost:8002 ...$(NC)"
+	uvicorn src.api.app:app --reload --host 0.0.0.0 --port 8002
 
 worker: ## Start Celery worker in development mode
 	@echo "$(GREEN)Starting Celery worker...$(NC)"

@@ -140,8 +140,11 @@ class Structure(Base):
     gamma: Mapped[Optional[float]] = mapped_column(nullable=True, comment="Angle gamma (degrees)")
     volume: Mapped[Optional[float]] = mapped_column(nullable=True, comment="Unit cell volume (Å³)")
 
-    # Additional metadata
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=dict)
+    # Additional metadata (attribute `extra_metadata` avoids the reserved
+    # SQLAlchemy `Base.metadata` name; DB column stays "metadata").
+    extra_metadata: Mapped[Optional[dict]] = mapped_column(
+        "metadata", JSON, nullable=True, default=dict
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -204,7 +207,7 @@ class Structure(Base):
                 "gamma": self.gamma,
                 "volume": self.volume,
             },
-            "metadata": self.metadata,
+            "metadata": self.extra_metadata,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

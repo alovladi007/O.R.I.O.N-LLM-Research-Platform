@@ -1,9 +1,14 @@
 """
-ORION Demo - Simplified Version
-==============================
+ORION Marketing Demo (Streamlit)
+================================
 
-This is a demo version that works with minimal dependencies.
-Run with: streamlit run demo_app.py
+Purpose: standalone marketing/illustrative demo with synthetic data.
+NOT part of the ORION backend. The canonical API is `src.api.app:app`.
+
+Run:
+    streamlit run examples/marketing/streamlit_demo.py
+
+Moved here during Phase 0 / Session 0.1 (entry-point consolidation).
 """
 
 import streamlit as st

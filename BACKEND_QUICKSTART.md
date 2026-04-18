@@ -1,210 +1,84 @@
-# ORION Backend - Quick Start Guide
+# ORION Backend — Quick Start
 
-## 🚀 Start the Backend API
+**Canonical entry point:** `src.api.app:app` on **port 8002**.
 
-### Option 1: Quick Start with Mock Data (Recommended for Testing Frontend) ✅
-
-Start the simplified development server with mock data - no database required!
-
-```bash
-# From project root
-cd src/api
-../../venv/bin/python -m uvicorn app_dev:app --reload --host 0.0.0.0 --port 8000
-```
-
-**This option:**
-- ✅ Starts immediately - no setup needed
-- ✅ Returns mock data for all endpoints
-- ✅ Full CORS support for localhost:3000, localhost:3001
-- ✅ Perfect for frontend development and testing
-- ✅ No PostgreSQL, Redis, or other services needed
-
-### Option 2: Basic Development Server (With Production App)
-
-Start the FastAPI backend server with minimal dependencies:
-
-```bash
-# From project root
-cd src/api
-python -m uvicorn app:app --reload --port 8000
-```
-
-**Note:** This will show connection errors for PostgreSQL, Redis, etc., and may fail to start due to missing dependencies.
-
-### Option 2: Full Stack with Docker (Production-like)
-
-```bash
-# Start all services (PostgreSQL, Redis, Neo4j, etc.)
-docker-compose up -d
-
-# Start the API server
-cd src/api
-python -m uvicorn app:app --reload --port 8000
-```
-
-### Option 3: Development with Mock Services
-
-```bash
-# Set environment to use mock services
-export ORION_USE_MOCKS=true
-
-# Start the API
-cd src/api
-python -m uvicorn app:app --reload --port 8000
-```
+No other entry points exist. `src/api/app_dev.py`, `simple_api.py`, and the root-level
+`demo_app.py` / `run_demo.py` were removed or moved to `examples/marketing/` in
+Phase 0 / Session 0.1 (entry-point consolidation).
 
 ---
 
-## ✅ Verify Backend is Running
-
-Once started, you should see:
-```
-INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process
-```
-
-Test the API:
-```bash
-# Health check
-curl http://localhost:8000/health
-
-# API documentation
-open http://localhost:8000/docs
-```
-
----
-
-## 🔌 Connect Frontend to Backend
-
-The frontend is already configured to connect to `http://localhost:8000`.
-
-**CORS is now configured to allow:**
-- `http://localhost:3000` (default Next.js port)
-- `http://localhost:3001` (current frontend port)
-- `http://localhost:8000` (API self-reference)
-
-Once the backend is running, refresh the frontend at http://localhost:3001 and the CORS errors will disappear!
-
----
-
-## 📝 Environment Variables (Optional)
-
-Create a `.env` file in the project root:
+## 1. Minimal local dev (no Docker)
 
 ```bash
-# Minimal configuration for development
-ENVIRONMENT=development
-DEBUG=true
-CORS_ORIGINS=http://localhost:3000,http://localhost:3001,http://localhost:8000
-
-# Optional: Database (if you have PostgreSQL running)
-DATABASE_URL=postgresql+asyncpg://orion:password@localhost:5432/orion_db
-
-# Optional: Redis (if you have Redis running)
-REDIS_URL=redis://localhost:6379/0
-```
-
----
-
-## 🛠️ Dependencies
-
-### Required Python Packages
-
-If you get import errors, install backend dependencies:
-
-```bash
-cd src/api
-pip install -r ../../requirements.txt
-
-# Or minimal install:
-pip install fastapi uvicorn pydantic python-dotenv
-```
-
-### Optional Services
-
-**PostgreSQL** (for database)
-```bash
-# macOS
-brew install postgresql
-brew services start postgresql
-
-# Create database
-createdb orion_db
-```
-
-**Redis** (for caching)
-```bash
-# macOS
-brew install redis
-brew services start redis
-```
-
----
-
-## 🔍 Troubleshooting
-
-### "Module not found" errors
-```bash
-# Install all requirements
+# Install dependencies
 pip install -r requirements.txt
+pip install -r requirements-dev.txt   # created in Session 0.5
+
+# Start the API (Postgres + Redis must be reachable per DATABASE_URL / REDIS_URL)
+uvicorn src.api.app:app --reload --host 0.0.0.0 --port 8002
 ```
 
-### "Database connection failed"
-The API will start anyway, but some endpoints won't work. You can either:
-1. Start PostgreSQL (see above)
-2. Use mock mode: `export ORION_USE_MOCKS=true`
-3. Ignore the errors (frontend UI will still work)
+or via `make`:
 
-### CORS errors persist
-1. Make sure backend is running on port 8000
-2. Check `src/api/config.py` includes `http://localhost:3001`
-3. Restart the backend server after changes
+```bash
+make dev
+```
 
----
+Verify:
 
-## 📊 What Works Without Services
+```bash
+curl http://localhost:8002/health
+open http://localhost:8002/docs
+```
 
-Even without PostgreSQL/Redis/Neo4j, these endpoints work:
-- ✅ `/health` - Health check
-- ✅ `/docs` - API documentation
-- ✅ `/api/v1/*` - Most GET endpoints (with mock data)
+## 2. Full stack via Docker Compose
 
-These require services:
-- ⏸️ Structure upload (needs PostgreSQL)
-- ⏸️ Simulation jobs (needs Celery + Redis)
-- ⏸️ Knowledge graph (needs Neo4j)
+```bash
+docker-compose up -d
+# API exposed on host port 8000 (inside the container it also runs on 8000).
+# Local dev without Docker uses 8002 to avoid clashing with the containerised API.
+```
 
----
+(Port mapping for Compose is unified to 8002 in Phase 13 / Session 13.1.)
 
-## 🎯 Next Steps
+## 3. Required environment
 
-1. **Start the backend:**
-   ```bash
-   cd src/api
-   python -m uvicorn app:app --reload --port 8000
-   ```
+Copy `.env.example` to `.env` and fill in:
 
-2. **Keep frontend running:**
-   ```bash
-   # Already running at http://localhost:3001
-   ```
+```bash
+DATABASE_URL=postgresql+asyncpg://orion:<password>@localhost:5432/orion_db
+REDIS_URL=redis://:<password>@localhost:6379/0
+JWT_SECRET_KEY=<≥32 random bytes, generate with `python -c 'import secrets;print(secrets.token_urlsafe(32))'`>
+ORION_ENV=dev
+CORS_ORIGINS=http://localhost:3000,http://localhost:3002
+```
 
-3. **Test the connection:**
-   - Open http://localhost:3001
-   - Navigate to "Structures" or "Design Search"
-   - CORS errors should be gone!
-   - You'll see loading states or "No data" messages (expected without database)
+Startup will fail fast if `JWT_SECRET_KEY` is missing or shorter than 32 chars, or if
+`CORS_ORIGINS` is `*` outside `ORION_ENV=dev` (enforced in Session 0.4).
 
-4. **Add real data (optional):**
-   - Start PostgreSQL
-   - Run migrations: `alembic upgrade head`
-   - Seed data: `python scripts/seed_workflows.py`
+## 4. Frontend connection
 
----
+Frontend is expected at `http://localhost:3002`. CORS is pre-wired for that origin.
 
-## 🚀 Ready!
+## 5. Endpoints
 
-Your ORION platform is ready for development!
-- **Frontend:** http://localhost:3001 ✅ Running
-- **Backend:** http://localhost:8000 ⏸️ Start with command above
-- **Docs:** http://localhost:8000/docs (once backend starts)
+See `http://localhost:8002/docs` for the auto-generated OpenAPI UI. Current routers:
+
+- `/healthz`, `/readyz`
+- `/api/v1/auth/*`
+- `/api/v1/materials/*`, `/api/v1/structures/*`, `/api/v1/workflows/*`, `/api/v1/jobs/*`
+- `/api/v1/ml/*`, `/api/v1/design/*`, `/api/v1/provenance/*`, `/api/v1/campaigns/*`
+- `/api/v1/mesoscale/*`, `/api/v1/continuum/*`
+- `/api/v1/orchestrator/*`, `/api/v1/agent/*`
+
+**Note:** Many endpoints still return stubbed data — see
+[ROADMAP_PROMPTS.md](./ROADMAP_PROMPTS.md) Phases 1–8 for the work to make each real.
+
+## 6. Troubleshooting
+
+- **`ImportError: cannot import name ...` on startup** → likely a dependency is missing.
+  Run `pip install -r requirements.txt`.
+- **DB connection refused** → start Postgres locally or run `docker-compose up -d postgres redis`.
+- **CORS rejected in browser** → add your origin to `CORS_ORIGINS` in `.env`.
+- **Port 8002 already in use** → `lsof -ti :8002 | xargs kill` or change the port in `make dev`.

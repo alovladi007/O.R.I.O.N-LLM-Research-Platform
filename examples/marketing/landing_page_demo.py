@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-ORION Platform Demo Server
-==========================
+ORION Marketing Landing Page (stdlib http.server)
+=================================================
 
-A simple demo server to showcase the ORION platform interface.
+Purpose: self-contained marketing landing page. Serves a single HTML page.
+NOT part of the ORION backend. The canonical API is `src.api.app:app`.
+
+Run:
+    python examples/marketing/landing_page_demo.py
+
+Moved here during Phase 0 / Session 0.1 (entry-point consolidation).
 """
 
 import http.server

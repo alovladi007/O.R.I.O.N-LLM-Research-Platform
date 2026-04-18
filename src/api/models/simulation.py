@@ -180,8 +180,10 @@ class SimulationJob(Base):
         index=True
     )
 
-    # Metadata
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=dict)
+    # Metadata (see notes in material.py on the attribute rename).
+    extra_metadata: Mapped[Optional[dict]] = mapped_column(
+        "metadata", JSON, nullable=True, default=dict
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -245,7 +247,7 @@ class SimulationJob(Base):
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "duration_seconds": duration,
             "worker_id": self.worker_id,
-            "metadata": self.metadata,
+            "metadata": self.extra_metadata,
         }
 
     @property
@@ -343,8 +345,10 @@ class SimulationResult(Base):
         comment="Quality score (0-1, higher is better)"
     )
 
-    # Metadata
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=dict)
+    # Metadata (see notes in material.py on the attribute rename).
+    extra_metadata: Mapped[Optional[dict]] = mapped_column(
+        "metadata", JSON, nullable=True, default=dict
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -375,6 +379,6 @@ class SimulationResult(Base):
             "artifacts": self.artifacts,
             "convergence_reached": self.convergence_reached,
             "quality_score": self.quality_score,
-            "metadata": self.metadata,
+            "metadata": self.extra_metadata,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
