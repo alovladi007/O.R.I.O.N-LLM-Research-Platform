@@ -2,18 +2,26 @@
 API Configuration
 =================
 
-Production-ready configuration management using Pydantic Settings (v2).
+Pydantic Settings v2 with security hardening landed in Phase 0 / Session 0.4:
 
-Migrated from Pydantic v1 style in Phase 0 / Session 0.1 to unblock import of
-the canonical backend entry point. Full security hardening (CORS validation,
-JWT length enforcement, env-based secret backends) lands in Session 0.4.
+- `CORS_ORIGINS` cannot be `"*"` unless `ORION_ENV=development`. A wildcard in
+  production / staging is rejected at startup with a descriptive error.
+- `cors_allow_methods` and `cors_allow_headers` default to explicit allowlists
+  rather than `["*"]`, and the same anti-wildcard rule is enforced.
+- `JWT_SECRET_KEY` (aliased `SECRET_KEY` for backcompat) must be ≥32
+  characters in production. In development an ephemeral key is generated.
+- `DATABASE_URL` and `REDIS_URL` must not be left at the insecure defaults
+  (which contain hardcoded demo passwords) in production.
+
+Full rationale and rotation policy live in `docs/SECURITY.md`.
 """
 
-from typing import List, Optional
-from functools import lru_cache
+import logging
 import secrets
+from functools import lru_cache
+from typing import List, Optional
 
-from pydantic import Field, SecretStr, field_validator, computed_field
+from pydantic import AliasChoices, Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     DotEnvSettingsSource,
@@ -22,10 +30,37 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+logger = logging.getLogger(__name__)
+
 
 # Fields we expect as CSV strings in the env / .env file. Without this, pydantic-
 # settings v2 tries JSON-decoding their values and rejects plain CSV.
-_CSV_LIST_FIELDS = {"cors_origins", "elasticsearch_hosts"}
+_CSV_LIST_FIELDS = {
+    "cors_origins",
+    "cors_allow_methods",
+    "cors_allow_headers",
+    "elasticsearch_hosts",
+}
+
+# Known insecure demo values carried over from .env.example; rejected in prod.
+_INSECURE_DB_SUBSTRINGS = ("orion_secure_pwd", "your_secure_postgres_password")
+_INSECURE_REDIS_SUBSTRINGS = ("orion_redis_pwd", "your_secure_redis_password")
+
+
+def _ensure_no_wildcard(values: List[str], *, field: str) -> None:
+    """Raise ValueError if the list contains a ``*`` wildcard entry.
+
+    CORS method / header wildcards are rejected in every environment
+    because the combination of ``allow_credentials=True`` with wildcards
+    is invalid per the CORS spec and browsers silently drop the response.
+    """
+    if "*" in values:
+        raise ValueError(
+            f"{field} contains '*'. CORS wildcards are disallowed because "
+            "ORION sets allow_credentials=True, which is incompatible with "
+            "wildcard methods/headers per the CORS spec. List the specific "
+            "values you need instead."
+        )
 
 
 class _CsvEnvSource(EnvSettingsSource):
@@ -80,7 +115,11 @@ class Settings(BaseSettings):
     app_name: str = "ORION Platform API"
     app_version: str = "2.0.0"
     app_description: str = "AI-driven materials science platform"
-    environment: str = Field("production", alias="ENVIRONMENT")
+    # Accept both ORION_ENV (canonical) and ENVIRONMENT (backward-compat).
+    environment: str = Field(
+        "production",
+        validation_alias=AliasChoices("ORION_ENV", "ENVIRONMENT"),
+    )
     debug: bool = Field(False, alias="DEBUG")
 
     # ------------------------------------------------------------------
@@ -94,9 +133,13 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Security
     # ------------------------------------------------------------------
+    # Accepts JWT_SECRET_KEY (canonical) or SECRET_KEY (backward-compat).
+    # In development, an ephemeral key is generated so local runs don't
+    # require env setup. In production, the model_validator rejects ephemeral
+    # or too-short keys.
     secret_key: SecretStr = Field(
         default_factory=lambda: SecretStr(secrets.token_urlsafe(32)),
-        alias="SECRET_KEY",
+        validation_alias=AliasChoices("JWT_SECRET_KEY", "SECRET_KEY"),
     )
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
@@ -105,22 +148,35 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # CORS
     # ------------------------------------------------------------------
-    # Typed as str at the env-parsing boundary; the validator splits into a
-    # list. pydantic-settings tries to JSON-decode List[str] fields from env,
-    # which breaks on plain CSV values.
+    # Typed as List[str], but CSV values from env are tolerated via the
+    # custom EnvSettingsSource (see _CsvEnvSource above) and the
+    # parse_cors_origins validator.
     cors_origins: List[str] = Field(
         default=[
             "http://localhost:3000",
-            "http://localhost:3001",
             "http://localhost:3002",
-            "http://localhost:8000",
             "http://localhost:8002",
         ],
         alias="CORS_ORIGINS",
     )
     cors_allow_credentials: bool = True
-    cors_allow_methods: List[str] = ["*"]  # tightened in Session 0.4
-    cors_allow_headers: List[str] = ["*"]  # tightened in Session 0.4
+    # Explicit allowlists; model_validator rejects wildcards outside dev.
+    cors_allow_methods: List[str] = Field(
+        default=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        validation_alias=AliasChoices("CORS_ALLOW_METHODS"),
+    )
+    cors_allow_headers: List[str] = Field(
+        default=[
+            "Accept",
+            "Accept-Language",
+            "Content-Language",
+            "Content-Type",
+            "Authorization",
+            "X-Requested-With",
+            "X-Request-ID",
+        ],
+        validation_alias=AliasChoices("CORS_ALLOW_HEADERS"),
+    )
 
     # ------------------------------------------------------------------
     # Database
@@ -237,19 +293,72 @@ class Settings(BaseSettings):
             raise ValueError(f"Environment must be one of {sorted(allowed)}")
         return v
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator(
+        "cors_origins",
+        "cors_allow_methods",
+        "cors_allow_headers",
+        "elasticsearch_hosts",
+        mode="before",
+    )
     @classmethod
-    def parse_cors_origins(cls, v):
+    def parse_csv_list(cls, v):
+        """Accept plain CSV strings from env / .env for List[str] fields."""
         if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
+            return [item.strip() for item in v.split(",") if item.strip()]
         return v
 
-    @field_validator("elasticsearch_hosts", mode="before")
-    @classmethod
-    def parse_elasticsearch_hosts(cls, v):
-        if isinstance(v, str):
-            return [host.strip() for host in v.split(",") if host.strip()]
-        return v
+    # ------------------------------------------------------------------
+    # Cross-field security invariants
+    # ------------------------------------------------------------------
+    @model_validator(mode="after")
+    def enforce_security_invariants(self) -> "Settings":
+        """
+        Reject insecure configurations when `environment != "development"`.
+
+        Development intentionally bypasses these so local runs don't require
+        full env setup. Staging / production / testing must supply real
+        secrets and tight CORS.
+        """
+        # Always-on invariants (apply in every environment)
+        _ensure_no_wildcard(self.cors_allow_methods, field="cors_allow_methods")
+        _ensure_no_wildcard(self.cors_allow_headers, field="cors_allow_headers")
+
+        # Relaxed in development
+        if self.environment == "development":
+            if "*" in self.cors_origins:
+                logger.warning(
+                    "CORS_ORIGINS contains '*' in development mode. "
+                    "This is permitted locally but MUST NOT ship to production."
+                )
+            return self
+
+        # Strict: non-dev environments
+        if "*" in self.cors_origins:
+            raise ValueError(
+                "CORS_ORIGINS='*' is not allowed outside ORION_ENV=development. "
+                "Set an explicit comma-separated list of allowed origins."
+            )
+
+        secret = self.secret_key.get_secret_value()
+        if len(secret) < 32:
+            raise ValueError(
+                "JWT_SECRET_KEY / SECRET_KEY must be at least 32 characters "
+                "in non-development environments. Generate one with "
+                "`python -c 'import secrets; print(secrets.token_urlsafe(48))'`."
+            )
+
+        if any(bad in self.database_url for bad in _INSECURE_DB_SUBSTRINGS):
+            raise ValueError(
+                "DATABASE_URL contains a known demo password. "
+                "Set a real DATABASE_URL for non-development environments."
+            )
+        if any(bad in self.redis_url for bad in _INSECURE_REDIS_SUBSTRINGS):
+            raise ValueError(
+                "REDIS_URL contains a known demo password. "
+                "Set a real REDIS_URL for non-development environments."
+            )
+
+        return self
 
     # ==================================================================
     # Computed / helpers

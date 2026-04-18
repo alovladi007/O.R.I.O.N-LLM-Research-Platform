@@ -8,9 +8,11 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=orion
-      - POSTGRES_PASSWORD=orion_secure_pwd
-      - POSTGRES_DB=orion_db
+      # Passwords sourced from .env so they don't ship in VCS.
+      # Compose will abort if these are unset; set them in .env.
+      - POSTGRES_USER=${POSTGRES_USER:-orion}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - POSTGRES_DB=${POSTGRES_DB:-orion_db}
       - POSTGRES_HOST_AUTH_METHOD=md5
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -29,7 +31,7 @@ services:
     container_name: orion-redis
     ports:
       - "6379:6379"
-    command: redis-server --appendonly yes --requirepass orion_redis_pwd
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
     volumes:
       - redis_data:/data
     networks:
@@ -69,8 +71,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      - MINIO_ROOT_USER=orion_admin
-      - MINIO_ROOT_PASSWORD=orion_minio_pwd
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-orion_admin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY in .env}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -139,8 +141,8 @@ services:
       dockerfile: docker/Dockerfile.worker
     container_name: orion-worker
     environment:
-      - CELERY_BROKER_URL=redis://orion_redis_pwd@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://orion_redis_pwd@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:?}@redis:6379/0
     volumes:
       - ./config:/app/config:ro
       - simulation_data:/app/simulations
@@ -158,7 +160,7 @@ services:
     ports:
       - "5555:5555"
     environment:
-      - CELERY_BROKER_URL=redis://orion_redis_pwd@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:?}@redis:6379/0
       - FLOWER_PORT=5555
     depends_on:
       - redis
@@ -187,7 +189,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=orion_grafana_pwd
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana
@@ -208,7 +210,7 @@ services:
       - "8888:8888"
     environment:
       - JUPYTER_ENABLE_LAB=yes
-      - JUPYTER_TOKEN=orion_jupyter_token
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-orion_local_dev_token}
     volumes:
       - ./notebooks:/home/jovyan/work
       - ./src:/home/jovyan/orion:ro
