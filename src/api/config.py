@@ -143,15 +143,6 @@ class Settings(BaseSettings):
     redis_pool_size: int = 10
 
     # ------------------------------------------------------------------
-    # Neo4j  (scheduled for removal in Session 0.2 if unused)
-    # ------------------------------------------------------------------
-    neo4j_uri: str = Field("bolt://localhost:7687", alias="NEO4J_URI")
-    neo4j_user: str = Field("neo4j", alias="NEO4J_USER")
-    neo4j_password: SecretStr = Field(
-        default=SecretStr("orion_secure_pwd"), alias="NEO4J_PASSWORD"
-    )
-
-    # ------------------------------------------------------------------
     # Elasticsearch
     # ------------------------------------------------------------------
     elasticsearch_hosts: List[str] = Field(

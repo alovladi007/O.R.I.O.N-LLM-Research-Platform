@@ -67,16 +67,6 @@ spec:
             secretKeyRef:
               name: orion-secrets
               key: redis-url
-        - name: NEO4J_URI
-          valueFrom:
-            secretKeyRef:
-              name: orion-secrets
-              key: neo4j-uri
-        - name: NEO4J_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: orion-secrets
-              key: neo4j-password
         - name: SECRET_KEY
           valueFrom:
             secretKeyRef:

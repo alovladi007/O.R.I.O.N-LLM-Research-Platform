@@ -1,31 +1,6 @@
 version: '3.8'
 
 services:
-  # Neo4j Graph Database
-  neo4j:
-    image: neo4j:5.15-community
-    container_name: orion-neo4j
-    ports:
-      - "7474:7474"  # HTTP
-      - "7687:7687"  # Bolt
-    environment:
-      - NEO4J_AUTH=neo4j/orion_secure_pwd
-      - NEO4J_dbms_memory_pagecache_size=1G
-      - NEO4J_dbms_memory_heap_max__size=2G
-      - NEO4J_dbms_memory_heap_initial__size=1G
-      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
-    volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
-      - neo4j_plugins:/plugins
-    networks:
-      - orion-network
-    healthcheck:
-      test: ["CMD", "neo4j", "status"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
   # PostgreSQL Database with pgvector extension
   postgres:
     image: pgvector/pgvector:pg16
@@ -116,9 +91,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - ORION_CONFIG=/app/config/config.yaml
       - POSTGRES_HOST=postgres
-      - NEO4J_URI=bolt://neo4j:7687
       - REDIS_HOST=redis
       - ELASTICSEARCH_HOST=elasticsearch
       - MINIO_ENDPOINT=minio:9000
@@ -128,7 +101,6 @@ services:
       - orion_logs:/app/logs
     depends_on:
       - postgres
-      - neo4j
       - redis
       - elasticsearch
       - minio
@@ -140,22 +112,22 @@ services:
       timeout: 10s
       retries: 5
 
-  # ORION Web UI (Streamlit)
-  orion-ui:
+  # ORION Frontend (Next.js)
+  orion-frontend:
     build:
       context: .
-      dockerfile: docker/Dockerfile.ui
-    container_name: orion-ui
+      dockerfile: docker/Dockerfile.frontend
+    container_name: orion-frontend
     ports:
-      - "8501:8501"
+      - "3002:3000"
     environment:
-      - ORION_API_URL=http://orion-api:8000
+      - NEXT_PUBLIC_API_URL=http://orion-api:8000
     depends_on:
       - orion-api
     networks:
       - orion-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -167,7 +139,6 @@ services:
       dockerfile: docker/Dockerfile.worker
     container_name: orion-worker
     environment:
-      - ORION_CONFIG=/app/config/config.yaml
       - CELERY_BROKER_URL=redis://orion_redis_pwd@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://orion_redis_pwd@redis:6379/0
     volumes:
@@ -176,10 +147,9 @@ services:
     depends_on:
       - redis
       - postgres
-      - neo4j
     networks:
       - orion-network
-    command: celery -A orion.tasks worker --loglevel=info
+    command: celery -A src.worker.celery_app worker --loglevel=info
 
   # Flower for Celery Monitoring
   flower:
@@ -250,9 +220,6 @@ networks:
     driver: bridge
 
 volumes:
-  neo4j_data:
-  neo4j_logs:
-  neo4j_plugins:
   postgres_data:
   redis_data:
   elasticsearch_data:
