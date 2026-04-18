@@ -61,7 +61,7 @@ class VectorEmbedding(Base):
     )
 
     extra_metadata: Mapped[Optional[dict]] = mapped_column(
-        "metadata", JSON, nullable=True, default=dict,
+        JSON, nullable=True, default=dict,
         comment="Free-form metadata (featurizer config, normalization, etc.).",
     )
 

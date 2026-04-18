@@ -185,13 +185,12 @@ class DesignCampaign(Base):
         comment="When campaign completed or was stopped"
     )
 
-    # Metadata for extensibility (see notes in material.py on the attribute rename).
+    # Metadata (see notes in material.py on the attribute rename).
     extra_metadata: Mapped[Optional[dict]] = mapped_column(
-        "metadata",
         JSON,
         nullable=True,
         default=dict,
-        comment="Additional metadata (tags, notes, etc.)"
+        comment="Additional metadata (tags, notes, etc.)",
     )
 
     # Relationships
@@ -384,11 +383,10 @@ class DesignIteration(Base):
 
     # Metadata (see notes in material.py on the attribute rename).
     extra_metadata: Mapped[Optional[dict]] = mapped_column(
-        "metadata",
         JSON,
         nullable=True,
         default=dict,
-        comment="Additional iteration metadata"
+        comment="Additional iteration metadata",
     )
 
     # Relationships

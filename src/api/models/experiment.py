@@ -83,7 +83,7 @@ class Instrument(Base):
     location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     extra_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        "metadata", JSONB, nullable=True, default=dict,
+        JSONB, nullable=True, default=dict,
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -165,7 +165,7 @@ class ExperimentRun(Base):
     )
 
     extra_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        "metadata", JSONB, nullable=True, default=dict,
+        JSONB, nullable=True, default=dict,
     )
 
     created_at: Mapped[datetime] = mapped_column(

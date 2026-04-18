@@ -66,12 +66,11 @@ class Material(Base):
     # Chemical composition (e.g., {"Mo": 1, "S": 2} for MoS2)
     composition: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
-    # Metadata (flexible JSON for future properties).
-    # Attribute renamed to `extra_metadata` to avoid collision with SQLAlchemy's
-    # reserved `Base.metadata`; the DB column name stays "metadata" via the
-    # positional `Column` name arg, so no Alembic migration is needed.
+    # Metadata (flexible JSON for future properties). Attribute named
+    # `extra_metadata` to avoid SQLAlchemy's reserved `Base.metadata`;
+    # migration 009 (Session 1.2b) renamed the DB column to match.
     extra_metadata: Mapped[Optional[dict]] = mapped_column(
-        "metadata", JSON, nullable=True, default=dict
+        JSON, nullable=True, default=dict
     )
 
     # Source information

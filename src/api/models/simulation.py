@@ -182,7 +182,7 @@ class SimulationJob(Base):
 
     # Metadata (see notes in material.py on the attribute rename).
     extra_metadata: Mapped[Optional[dict]] = mapped_column(
-        "metadata", JSON, nullable=True, default=dict
+        JSON, nullable=True, default=dict
     )
 
     # Timestamps
@@ -347,7 +347,7 @@ class SimulationResult(Base):
 
     # Metadata (see notes in material.py on the attribute rename).
     extra_metadata: Mapped[Optional[dict]] = mapped_column(
-        "metadata", JSON, nullable=True, default=dict
+        JSON, nullable=True, default=dict
     )
 
     # Timestamps

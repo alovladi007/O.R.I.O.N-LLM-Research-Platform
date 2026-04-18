@@ -127,11 +127,27 @@ class PredictedProperties(Base):
     #   ...
     # }
     extra_metadata: Mapped[Optional[dict]] = mapped_column(
-        "metadata",
         JSON,
         nullable=True,
         default=dict,
-        comment="Additional metadata about the prediction"
+        comment="Additional metadata about the prediction",
+    )
+
+    # Unit the predicted value is stored in. The source of truth is
+    # `backend.common.units.PROPERTY_REGISTRY`; this column lets bulk
+    # importers and the API record "the value was fed in as eV" even if
+    # ORION rescales to SI internally. Populated by Session 1.3.
+    value_unit: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        comment="Unit the raw value was reported in (e.g. 'eV'). SI stored elsewhere.",
+    )
+
+    # Uncertainty payload. Shape depends on the source; see docstring.
+    uncertainty: Mapped[Optional[dict]] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="Uncertainty descriptor; shape varies by source.",
     )
 
     # Timestamps

@@ -140,10 +140,33 @@ class Structure(Base):
     gamma: Mapped[Optional[float]] = mapped_column(nullable=True, comment="Angle gamma (degrees)")
     volume: Mapped[Optional[float]] = mapped_column(nullable=True, comment="Unit cell volume (Å³)")
 
-    # Additional metadata (attribute `extra_metadata` avoids the reserved
-    # SQLAlchemy `Base.metadata` name; DB column stays "metadata").
+    # Deterministic fingerprint; populated by backend.common.structures.hashing.
+    # Session 1.2b added this column; migration 009 adds the DB column + a
+    # unique index to make duplicate uploads detectable at insert time.
+    structure_hash: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+        unique=True,
+        comment="SHA-256 (64-hex) of the canonical species+lattice+symmetrized coords.",
+    )
+
+    # Learned representation. Stored as Text (not pgvector) for now — Phase
+    # 6 introduces the typed Vector(256) column + ANN index. Keeping Text
+    # means this column works even without the pgvector extension.
+    embedding: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Optional 256-d featurizer output (Text serialization; "
+                "upgraded to pgvector Vector(256) in Phase 6).",
+    )
+
+    # Additional metadata. Session 1.2b renamed this DB column from
+    # "metadata" to "extra_metadata" via migration 009 (the attribute was
+    # already `extra_metadata` since Session 0.1). No more positional
+    # `mapped_column("metadata", ...)` workaround.
     extra_metadata: Mapped[Optional[dict]] = mapped_column(
-        "metadata", JSON, nullable=True, default=dict
+        JSON, nullable=True, default=dict
     )
 
     # Timestamps
