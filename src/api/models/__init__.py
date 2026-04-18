@@ -36,6 +36,7 @@ from .multiscale import (
     MultiscaleJobStatus,
 )
 from .campaign import DesignCampaign, DesignIteration, CampaignStatus
+from .bulk_import import BulkImportJob, BulkImportKind, BulkImportStatus
 from .experiment import (
     Instrument,
     ExperimentRun,
@@ -74,6 +75,9 @@ __all__ = [
     "DesignCampaign",
     "DesignIteration",
     "CampaignStatus",
+    "BulkImportJob",
+    "BulkImportKind",
+    "BulkImportStatus",
     "Instrument",
     "ExperimentRun",
     "InstrumentStatus",

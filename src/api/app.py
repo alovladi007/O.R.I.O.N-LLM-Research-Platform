@@ -52,6 +52,7 @@ from .routers import (
     continuum_router,
     orchestrator_router,
     agent_router,
+    properties_router,
 )
 from .exceptions import (
     ORIONAPIException,
@@ -271,6 +272,12 @@ def create_app() -> FastAPI:
         agent_router,
         prefix=f"{settings.api_prefix}",
         tags=["agent"]
+    )
+    # Session 1.3 — bulk property importer (endpoints are self-prefixed).
+    app.include_router(
+        properties_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["properties"],
     )
 
     # Add Prometheus metrics if enabled
