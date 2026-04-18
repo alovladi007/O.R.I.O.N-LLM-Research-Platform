@@ -11,6 +11,18 @@
 
 ---
 
+## 🗺️ Implementation Roadmap
+
+**This platform is a prototype with production-grade scaffolding.** Several advertised features (real structure parsing via the API, ML training submission, agent campaign loop, several engines) are currently stubbed.
+
+A detailed **14-phase, ~50-session implementation plan** to bring ORION to scientifically correct, end-to-end functional state is tracked in:
+
+➡️ **[ROADMAP_PROMPTS.md](./ROADMAP_PROMPTS.md)**
+
+Each session in the roadmap is a self-contained, paste-ready prompt with explicit scientific acceptance tests (e.g., Si PBE bandgap ~0.6 eV, Cu EAM melting point ±150 K of 1358 K, Al bulk modulus ±10% of 78 GPa). Work through phases in order; Phase 0 (repo hygiene) unblocks everything else.
+
+---
+
 ## 🚀 Overview
 
 NANO-OS is a modular platform that integrates:
