@@ -32,8 +32,11 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+# Note: app.py includes this router at `prefix="/api/v1/structures"`, so the
+# router itself must NOT repeat "/structures". (The pre-refactor code did —
+# which routed every endpoint to /api/v1/structures/structures/... — fixed in
+# Session 1.1.)
 router = APIRouter(
-    prefix="/structures",
     tags=["structures"],
     dependencies=[Depends(get_current_active_user)],
     responses={
@@ -43,77 +46,284 @@ router = APIRouter(
 )
 
 
-async def parse_structure_file(text: str, format: str) -> dict:
+MIN_ATOM_SEPARATION_A = 0.5  # Å; rejects obviously-degenerate structures.
+
+
+async def parse_structure_file(
+    text: str, format: str, *, symprec: float = 0.01,
+) -> dict:
     """
-    Parse structure file and extract atomic information.
+    Parse a structure file with ``backend.common.structures``.
 
-    This is a stub - actual parsing will be implemented with proper parsers.
-    For now, returns basic placeholder data.
+    This is the canonical parse path — all of CRUD, the /parse endpoint,
+    and the Session 1.5 seed loader go through here.
 
-    Args:
-        text: Raw structure file content
-        format: File format (CIF, POSCAR, XYZ, etc.)
+    On top of the raw parser output we compute (when possible):
 
-    Returns:
-        Dictionary with parsed structure data
+    - **spacegroup symbol + number + crystal system** via
+      :class:`pymatgen.symmetry.analyzer.SpacegroupAnalyzer` at the given
+      ``symprec`` (Å).
+    - **density** = (formula mass × n_formula_units) / volume, reported in
+      g/cm³.
+    - **structure_hash** (64-hex SHA-256) from
+      :func:`backend.common.structures.hashing.structure_hash`. Uses the
+      pymatgen-aware path when a :class:`pymatgen.core.Structure` is
+      reachable (CIF / POSCAR); falls back to the raw
+      species + fractional-coords hash for XYZ molecular inputs.
+
+    The function also enforces one always-on physical sanity check:
+
+    - **No two atoms closer than 0.5 Å.** Anything closer is a parsing
+      / upload error rather than a real structure; we raise
+      :class:`ParsingError` which maps to HTTP 422.
     """
-    # TODO: Import and use actual parsers from backend.common.structures.parsers
-    # For now, return mock data to make the API functional
+    from backend.common.structures import StructureFormat, parse_structure
+    from backend.common.structures.hashing import structure_hash as _hash_structure
 
-    logger.warning(f"Using stub parser for format: {format}")
+    fmt_upper = format.upper()
+    try:
+        fmt_enum = StructureFormat(fmt_upper)
+    except ValueError as exc:
+        raise ParsingError(
+            file_format=format,
+            message=f"unsupported format; expected one of "
+            f"{[f.value for f in StructureFormat]}",
+        ) from exc
 
-    # Extract some basic info (this is a placeholder)
-    num_lines = len(text.split('\n'))
+    try:
+        internal = parse_structure(text, fmt_enum)
+    except Exception as exc:  # noqa: BLE001 — parser re-raises a broad shape
+        raise ParsingError(file_format=format, message=str(exc)) from exc
 
+    # Convert to pymatgen Structure for symmetry / density / hashing where
+    # it makes sense. XYZ is treated as molecular; skip symmetry.
+    pmg_struct = None
+    if fmt_enum in (StructureFormat.CIF, StructureFormat.POSCAR):
+        try:
+            from pymatgen.core import Lattice, Structure as PmgStructure
+
+            pmg_struct = PmgStructure(
+                lattice=Lattice(internal.lattice_vectors),
+                species=internal.atomic_species,
+                coords=internal.atomic_positions,
+                coords_are_cartesian=False,
+            )
+        except Exception as exc:  # pragma: no cover — pymatgen absent
+            logger.warning("pymatgen unavailable for symmetry analysis: %s", exc)
+
+    # --- site distance sanity check ---------------------------------------
+    min_sep = _minimum_pair_distance_A(internal, pmg_struct)
+    if min_sep is not None and min_sep < MIN_ATOM_SEPARATION_A:
+        raise ParsingError(
+            file_format=format,
+            message=(
+                f"Two atoms are {min_sep:.3f} Å apart (below the "
+                f"{MIN_ATOM_SEPARATION_A} Å cutoff). This typically indicates "
+                "overlapping sites or a parsing error — upload the input "
+                "file separately and investigate."
+            ),
+        )
+
+    # --- symmetry analysis -------------------------------------------------
+    space_group_symbol: Optional[str] = None
+    space_group_number: Optional[int] = None
+    crystal_system: Optional[str] = None
+    density_g_cm3: Optional[float] = None
+
+    if pmg_struct is not None:
+        try:
+            from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+
+            sga = SpacegroupAnalyzer(pmg_struct, symprec=symprec, angle_tolerance=5.0)
+            space_group_symbol = sga.get_space_group_symbol()
+            space_group_number = sga.get_space_group_number()
+            crystal_system = sga.get_crystal_system()
+        except Exception as exc:  # noqa: BLE001 — spacegroup failures are non-fatal
+            logger.info(
+                "Spacegroup analysis failed for %s at symprec=%s: %s",
+                format, symprec, exc,
+            )
+        try:
+            # pymatgen's density is g/cm³ already
+            density_g_cm3 = float(pmg_struct.density)
+        except Exception as exc:  # noqa: BLE001
+            logger.info("Density computation failed: %s", exc)
+
+    # --- hash --------------------------------------------------------------
+    try:
+        shash = _hash_structure(
+            pmg_structure=pmg_struct,
+            lattice=internal.lattice_vectors if pmg_struct is None else None,
+            atoms=(
+                [
+                    {"species": sp, "position": pos}
+                    for sp, pos in zip(internal.atomic_species, internal.atomic_positions)
+                ]
+                if pmg_struct is None
+                else None
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 — hashing should be robust
+        logger.error("structure_hash computation failed: %s", exc)
+        raise ParsingError(
+            file_format=format,
+            message=f"unable to compute canonical structure hash: {exc}",
+        ) from exc
+
+    # --- assemble payload the router persists / returns --------------------
     return {
-        "formula": "Unknown",  # Would be extracted by real parser
-        "num_atoms": 0,
-        "dimensionality": 3,
+        "formula": internal.formula,
+        "num_atoms": internal.num_atoms,
+        "dimensionality": internal.dimensionality,
         "lattice": {
-            "vectors": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-            "a": 1.0,
-            "b": 1.0,
-            "c": 1.0,
-            "alpha": 90.0,
-            "beta": 90.0,
-            "gamma": 90.0,
-            "volume": 1.0
+            "vectors": internal.lattice_vectors,
+            "a": internal.a,
+            "b": internal.b,
+            "c": internal.c,
+            "alpha": internal.alpha,
+            "beta": internal.beta,
+            "gamma": internal.gamma,
+            "volume": internal.volume,
         },
-        "atoms": [],
+        "atoms": [
+            {"species": sp, "position": list(pos)}
+            for sp, pos in zip(internal.atomic_species, internal.atomic_positions)
+        ],
         "lattice_parameters": {
-            "a": 1.0,
-            "b": 1.0,
-            "c": 1.0,
-            "alpha": 90.0,
-            "beta": 90.0,
-            "gamma": 90.0,
-            "volume": 1.0
-        }
+            "a": internal.a,
+            "b": internal.b,
+            "c": internal.c,
+            "alpha": internal.alpha,
+            "beta": internal.beta,
+            "gamma": internal.gamma,
+            "volume": internal.volume,
+        },
+        "space_group": space_group_symbol,
+        "space_group_number": space_group_number,
+        "crystal_system": crystal_system,
+        "density": density_g_cm3,
+        "structure_hash": shash,
     }
+
+
+def _minimum_pair_distance_A(internal, pmg_struct) -> Optional[float]:
+    """
+    Return the minimum pairwise atom–atom distance in Å.
+
+    Uses pymatgen's distance_matrix (with PBC) when available; falls back
+    to a quadratic scan of Cartesian coords otherwise. Returns ``None``
+    when the structure has <2 atoms.
+    """
+    if pmg_struct is not None:
+        try:
+            import numpy as np
+
+            dm = pmg_struct.distance_matrix  # Nx N, zero diagonal
+            mask = ~np.eye(dm.shape[0], dtype=bool)
+            if not mask.any():
+                return None
+            return float(dm[mask].min())
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Fallback: direct scan without PBC.
+    n = len(internal.atomic_positions)
+    if n < 2:
+        return None
+    # Fractional → cartesian
+    import numpy as np
+
+    lat = np.asarray(internal.lattice_vectors, dtype=float)
+    frac = np.asarray(internal.atomic_positions, dtype=float)
+    cart = frac @ lat
+    diffs = cart[:, None, :] - cart[None, :, :]
+    dists = np.linalg.norm(diffs, axis=-1)
+    # Mask self-pairs
+    np.fill_diagonal(dists, np.inf)
+    return float(dists.min())
 
 
 async def export_structure(structure: Structure, export_format: str) -> str:
     """
-    Export structure to specified format.
+    Serialize a stored :class:`Structure` to CIF / POSCAR / XYZ.
 
-    This is a stub - actual export will be implemented with proper converters.
-
-    Args:
-        structure: Structure model
-        export_format: Target format (CIF, POSCAR, XYZ)
-
-    Returns:
-        Structure file content as string
+    Delegates to ``backend.common.structures.{to_cif, to_poscar, to_xyz}``
+    after rehydrating an :class:`InternalStructureModel` from the DB row.
+    Raises :class:`ParsingError` if the row is missing the fields needed
+    for serialization (pre-parse legacy rows without lattice/atoms).
     """
-    # TODO: Implement actual structure export
-    logger.warning(f"Using stub exporter for format: {export_format}")
+    from backend.common.structures import (
+        InternalStructureModel,
+        StructureFormat,
+        to_cif,
+        to_poscar,
+        to_xyz,
+    )
 
-    # For now, return the raw text if available
-    if structure.raw_text:
-        return structure.raw_text
+    fmt_upper = export_format.upper()
+    try:
+        fmt_enum = StructureFormat(fmt_upper)
+    except ValueError as exc:
+        raise ParsingError(
+            file_format=export_format,
+            message="unsupported export format; expected CIF, POSCAR, or XYZ",
+        ) from exc
 
-    # Otherwise return a placeholder
-    return f"# Structure {structure.id}\n# Export format: {export_format}\n# Not yet implemented\n"
+    atoms = structure.atoms or []
+    if not atoms or not structure.lattice:
+        # Pre-parse legacy rows: no normalized atoms/lattice captured.
+        if structure.raw_text and fmt_enum.value == structure.format.value:
+            return structure.raw_text
+        raise ParsingError(
+            file_format=export_format,
+            message="structure has no parsed lattice/atoms available for export",
+        )
+
+    species = [a.get("species") or a.get("element") or a.get("symbol") for a in atoms]
+    positions = [a.get("position") or a.get("coords") for a in atoms]
+
+    lattice_vectors = structure.lattice.get("vectors") if isinstance(structure.lattice, dict) else None
+    if lattice_vectors is None:
+        # Reconstruct lattice from a,b,c,α,β,γ if vectors aren't stored.
+        from pymatgen.core import Lattice
+
+        lattice_vectors = Lattice.from_parameters(
+            a=structure.a, b=structure.b, c=structure.c,
+            alpha=structure.alpha, beta=structure.beta, gamma=structure.gamma,
+        ).matrix.tolist()
+
+    internal = InternalStructureModel(
+        lattice_vectors=lattice_vectors,
+        atomic_species=species,
+        atomic_positions=positions,
+        dimensionality=structure.dimensionality or 3,
+        formula=structure.formula or "X",
+        a=structure.a or 0.0,
+        b=structure.b or 0.0,
+        c=structure.c or 0.0,
+        alpha=structure.alpha or 90.0,
+        beta=structure.beta or 90.0,
+        gamma=structure.gamma or 90.0,
+        volume=structure.volume or 0.0,
+        num_atoms=structure.num_atoms or len(species),
+        space_group=structure.space_group,
+        space_group_number=structure.space_group_number,
+    )
+
+    try:
+        if fmt_enum == StructureFormat.CIF:
+            return to_cif(internal)
+        if fmt_enum == StructureFormat.POSCAR:
+            return to_poscar(internal)
+        if fmt_enum == StructureFormat.XYZ:
+            return to_xyz(internal)
+    except Exception as exc:  # noqa: BLE001 — re-raise as 422
+        raise ParsingError(file_format=export_format, message=str(exc)) from exc
+
+    raise ParsingError(
+        file_format=export_format,
+        message=f"export helper not registered for {fmt_enum}",
+    )
 
 
 @router.post(
@@ -193,9 +403,10 @@ async def create_structure(
             message=str(e)
         )
 
-    # Create structure
+    # Create structure — every derived field comes from the canonical parser.
     new_structure = Structure(
         material_id=structure_data.material_id,
+        owner_id=current_user.id,
         name=structure_data.name,
         description=structure_data.description,
         format=structure_data.format,
@@ -207,7 +418,7 @@ async def create_structure(
         formula=parsed.get("formula"),
         num_atoms=parsed.get("num_atoms"),
         dimensionality=parsed.get("dimensionality"),
-        # Lattice parameters
+        # Lattice parameters (scalar columns for easy filtering)
         a=parsed.get("lattice_parameters", {}).get("a"),
         b=parsed.get("lattice_parameters", {}).get("b"),
         c=parsed.get("lattice_parameters", {}).get("c"),
@@ -215,14 +426,32 @@ async def create_structure(
         beta=parsed.get("lattice_parameters", {}).get("beta"),
         gamma=parsed.get("lattice_parameters", {}).get("gamma"),
         volume=parsed.get("lattice_parameters", {}).get("volume"),
-        metadata=structure_data.metadata or {}
+        # Symmetry + derived
+        space_group=parsed.get("space_group"),
+        space_group_number=parsed.get("space_group_number"),
+        crystal_system=parsed.get("crystal_system"),
+        density=parsed.get("density"),
+        structure_hash=parsed.get("structure_hash"),
+        extra_metadata=structure_data.metadata or {},
     )
 
     db.add(new_structure)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception as exc:  # likely unique-hash conflict
+        await db.rollback()
+        from ..exceptions import ConflictError
+
+        raise ConflictError(
+            f"Structure with hash {parsed.get('structure_hash')[:12]}… already exists."
+        ) from exc
     await db.refresh(new_structure)
 
-    logger.info(f"Structure created: {new_structure.id}")
+    logger.info(
+        "Structure created: id=%s hash=%s spacegroup=%s",
+        new_structure.id, (new_structure.structure_hash or "")[:12],
+        new_structure.space_group_number,
+    )
 
     return StructureResponse.model_validate(new_structure)
 
@@ -500,29 +729,28 @@ async def parse_structure(
     """
     Parse structure file without saving.
     """
-    logger.info(f"Parsing structure: format={parse_request.format}")
+    logger.info(
+        "Parsing structure: format=%s symprec=%s",
+        parse_request.format, parse_request.symprec,
+    )
 
-    try:
-        parsed = await parse_structure_file(
-            parse_request.text,
-            parse_request.format
-        )
+    parsed = await parse_structure_file(
+        parse_request.text,
+        parse_request.format,
+        symprec=parse_request.symprec,
+    )
 
-        return StructureParseResponse(
-            formula=parsed["formula"],
-            num_atoms=parsed["num_atoms"],
-            dimensionality=parsed["dimensionality"],
-            lattice=parsed["lattice"],
-            atoms=parsed["atoms"],
-            lattice_parameters=parsed["lattice_parameters"]
-        )
-
-    except Exception as e:
-        logger.error(f"Structure parsing failed: {e}")
-        raise ParsingError(
-            file_format=parse_request.format,
-            message=str(e)
-        )
+    return StructureParseResponse(
+        formula=parsed["formula"],
+        num_atoms=parsed["num_atoms"],
+        dimensionality=parsed["dimensionality"],
+        lattice=parsed["lattice"],
+        atoms=parsed["atoms"],
+        lattice_parameters=parsed["lattice_parameters"],
+        space_group=parsed.get("space_group"),
+        space_group_number=parsed.get("space_group_number"),
+        structure_hash=parsed["structure_hash"],
+    )
 
 
 @router.get(

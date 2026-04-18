@@ -424,8 +424,12 @@ def _parse_cif(text: str) -> InternalStructureModel:
         ParsingError: If CIF parsing fails
     """
     try:
-        # CifParser can handle string input directly
-        parser = CifParser.from_string(text)
+        # pymatgen renamed `from_string` → `from_str` in newer versions;
+        # support both for install-version tolerance.
+        if hasattr(CifParser, "from_str"):
+            parser = CifParser.from_str(text)
+        else:
+            parser = CifParser.from_string(text)
 
         # Get all structures from CIF (CIF can contain multiple structures)
         structures = parser.get_structures()
@@ -489,8 +493,11 @@ def _parse_poscar(text: str) -> InternalStructureModel:
         ParsingError: If POSCAR parsing fails
     """
     try:
-        # Poscar.from_string expects the content directly
-        poscar = Poscar.from_string(text)
+        # Same pymatgen naming split (`from_string` → `from_str`).
+        if hasattr(Poscar, "from_str"):
+            poscar = Poscar.from_str(text)
+        else:
+            poscar = Poscar.from_string(text)
         structure = poscar.structure
 
         return _pymatgen_to_internal(structure)
@@ -539,7 +546,7 @@ def _parse_xyz(text: str) -> InternalStructureModel:
     try:
         # XYZ files don't have lattice information, so we need to construct one
         # Pymatgen's XYZ parser returns a Molecule, not a Structure
-        xyz = XYZ.from_string(text)
+        xyz = XYZ.from_str(text) if hasattr(XYZ, "from_str") else XYZ.from_string(text)
         molecule = xyz.molecule
 
         # Convert molecule to structure by placing it in a box

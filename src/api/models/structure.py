@@ -140,6 +140,33 @@ class Structure(Base):
     gamma: Mapped[Optional[float]] = mapped_column(nullable=True, comment="Angle gamma (degrees)")
     volume: Mapped[Optional[float]] = mapped_column(nullable=True, comment="Unit cell volume (Å³)")
 
+    # Symmetry analysis output (populated by the structure parser with pymatgen's
+    # SpacegroupAnalyzer at symprec=0.01 by default). Session 1.1 adds these;
+    # migration 010 creates the DB columns. Both nullable because:
+    #   - XYZ / molecular inputs have no spacegroup
+    #   - SpacegroupAnalyzer can fail on pathological inputs
+    space_group: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        index=True,
+        comment="International spacegroup symbol (e.g. 'Fd-3m').",
+    )
+    space_group_number: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        index=True,
+        comment="International spacegroup number 1–230.",
+    )
+    crystal_system: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        comment="cubic | tetragonal | orthorhombic | hexagonal | trigonal | "
+                "monoclinic | triclinic",
+    )
+    density: Mapped[Optional[float]] = mapped_column(
+        nullable=True, comment="Mass density (g/cm³), computed from mass/volume.",
+    )
+
     # Deterministic fingerprint; populated by backend.common.structures.hashing.
     # Session 1.2b added this column; migration 009 adds the DB column + a
     # unique index to make duplicate uploads detectable at insert time.
@@ -230,6 +257,11 @@ class Structure(Base):
                 "gamma": self.gamma,
                 "volume": self.volume,
             },
+            "space_group": self.space_group,
+            "space_group_number": self.space_group_number,
+            "crystal_system": self.crystal_system,
+            "density": self.density,
+            "structure_hash": self.structure_hash,
             "metadata": self.extra_metadata,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

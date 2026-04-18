@@ -39,24 +39,54 @@ class StructureParseRequest(BaseModel):
     """Schema for structure parsing request."""
     text: str = Field(..., description="Raw structure file content")
     format: str = Field(..., description="File format (CIF, POSCAR, XYZ)")
+    symprec: float = Field(
+        0.01,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Symmetry tolerance (Å) passed to pymatgen's SpacegroupAnalyzer. "
+            "Default 0.01 matches the Materials Project convention. Loosen "
+            "to e.g. 0.1 for DFT-relaxed structures with residual noise."
+        ),
+    )
 
     class Config:
         json_schema_extra = {
             "example": {
-                "text": "Mo 1.0 1.0 1.0\nS 2.0 2.0 2.0",
-                "format": "XYZ"
+                "text": "data_Si\n_cell_length_a 5.43\n...",
+                "format": "CIF",
+                "symprec": 0.01,
             }
         }
 
 
 class StructureParseResponse(BaseModel):
-    """Schema for parsed structure data."""
-    formula: str = Field(..., description="Chemical formula")
-    num_atoms: int = Field(..., description="Number of atoms")
-    dimensionality: int = Field(..., description="0=molecule, 1=1D, 2=2D, 3=bulk")
-    lattice: dict = Field(..., description="Lattice vectors and parameters")
-    atoms: list[dict] = Field(..., description="Atomic species and positions")
-    lattice_parameters: dict = Field(..., description="a, b, c, alpha, beta, gamma, volume")
+    """
+    Parsed-structure payload. Symmetry fields are populated when pymatgen
+    can determine a spacegroup; they default to ``None`` for molecular
+    (XYZ) inputs or on symprec-too-tight failures.
+    """
+    formula: str = Field(..., description="Reduced chemical formula (e.g. 'SiO2').")
+    num_atoms: int = Field(..., ge=1, description="Total atoms in the unit cell.")
+    dimensionality: int = Field(
+        ..., ge=0, le=3,
+        description="0=molecule, 1=chain, 2=layer, 3=bulk.",
+    )
+    lattice: dict = Field(..., description="Lattice vectors and derived params.")
+    atoms: list[dict] = Field(..., description="List of {species, position} atoms.")
+    lattice_parameters: dict = Field(
+        ..., description="a, b, c (Å), alpha, beta, gamma (deg), volume (Å³)."
+    )
+    space_group: Optional[str] = Field(
+        None, description="International spacegroup symbol (e.g. 'Fd-3m')."
+    )
+    space_group_number: Optional[int] = Field(
+        None, ge=1, le=230, description="International spacegroup number 1–230.",
+    )
+    structure_hash: str = Field(
+        ..., min_length=64, max_length=64,
+        description="Deterministic 64-char SHA-256 fingerprint.",
+    )
 
 
 class StructureResponse(BaseModel):
@@ -71,6 +101,9 @@ class StructureResponse(BaseModel):
     num_atoms: Optional[int] = None
     dimensionality: Optional[int] = None
     lattice_parameters: dict = Field(default_factory=dict)
+    space_group: Optional[str] = None
+    space_group_number: Optional[int] = None
+    structure_hash: Optional[str] = None
     metadata: dict = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
