@@ -1,60 +1,73 @@
-# ORION Platform - Quick Start Guide 🚀
+# ORION — Quick Start
 
-**Status:** ✅ **ALL SERVICES RUNNING**
-**Date:** 2025-11-17
+Shortest path from a fresh clone to something running. Honest version.
 
----
+> For the full story and roadmap, read [README.md](./README.md) and
+> [ROADMAP_PROMPTS.md](./ROADMAP_PROMPTS.md). For backend dev specifics, read
+> [BACKEND_QUICKSTART.md](./BACKEND_QUICKSTART.md).
 
-## 🌐 Access URLs
+## Prereqs
 
-### Frontend (Next.js)
-**Main Dashboard:** http://localhost:3002
+- Python ≥ 3.10
+- Docker + Docker Compose
+- Node ≥ 18 (frontend only)
 
-**Available Pages:**
-- 🏠 **Home:** http://localhost:3002
-- 🔬 **Structures:** http://localhost:3002/structures
-- 🎨 **Design:** http://localhost:3002/design
-- 🤖 **Orchestrator:** http://localhost:3002/orchestrator *(NEW - Session 30)*
-- 🔐 **Login:** http://localhost:3002/login *(Session 10)*
-- 📝 **Register:** http://localhost:3002/register *(Session 10)*
+## 1. Clone and configure
 
-### Backend (FastAPI)
-**API Base:** http://localhost:8000
+```bash
+git clone https://github.com/alovladi007/O.R.I.O.N-LLM-Research-Platform.git
+cd O.R.I.O.N-LLM-Research-Platform
 
-**API Documentation:**
-- 📚 **Swagger UI:** http://localhost:8000/docs
-- 📖 **ReDoc:** http://localhost:8000/redoc
+cp .env.example .env
+# Edit .env and set at least:
+#   DATABASE_URL, REDIS_URL, JWT_SECRET_KEY (≥32 chars), CORS_ORIGINS
+```
 
----
+## 2. Start infra (DB + Redis only — minimal footprint)
 
-## 🆕 New Features (Sessions 13-30)
+```bash
+docker-compose up -d postgres redis
+make migrate-up        # alembic upgrade head
+```
 
-### Orchestrator System (Session 30)
-Visit **http://localhost:3002/orchestrator** to access:
-- Autonomous workflow orchestration
-- Multi-agent coordination
-- Real-time workflow monitoring
-- AI agent chat interface
+## 3. Run the backend locally
 
-### ML Features (Sessions 14-20)
-**API Endpoints available at http://localhost:8000/docs**
+```bash
+pip install -r requirements.txt
+make dev               # uvicorn src.api.app:app --reload --port 8002
+```
 
-### Python SDK (Sessions 21-28)
-Install: \`cd sdk/python && pip install -e .\`
+Smoke test:
 
----
+```bash
+curl http://localhost:8002/health      # should return 200
+open  http://localhost:8002/docs       # OpenAPI UI
+```
 
-## 📦 Services Status
+## 4. Run the frontend
 
-✅ **Frontend:** Port 3002 (Node.js/Next.js)  
-✅ **Backend:** Port 8000 (Docker/FastAPI)  
-✅ **All dependencies installed**  
-✅ **Sessions 1-30 integrated**
+```bash
+cd frontend
+npm install
+npm run dev            # http://localhost:3002
+```
 
----
+## 5. Or: full stack via Docker Compose
 
-**Quick Access:** http://localhost:3002
+```bash
+docker-compose up -d   # brings up postgres, redis, minio, elasticsearch,
+                       # prometheus, grafana, api, worker, frontend, jupyter
+```
 
-**API Docs:** http://localhost:8000/docs
+Services and their ports are listed in [README.md](./README.md#services-in-docker-composeyml).
 
-**Enjoy exploring ORION! 🚀**
+## Troubleshooting
+
+- **`src.api.app` won't import** — expected during Phase 0; the canonical app
+  still has stale model imports that Session 1.2 resolves. Check
+  [CHANGELOG.md](./CHANGELOG.md) to see which session you're on.
+- **CORS rejected in browser** — add your origin to `CORS_ORIGINS` in `.env`
+  (comma-separated).
+- **Port 8002 in use** — `lsof -ti :8002 | xargs kill` or change the port in
+  the `make dev` target.
+- **macOS specifics** — see [docs/guides/MACOS_SETUP.md](./docs/guides/MACOS_SETUP.md).

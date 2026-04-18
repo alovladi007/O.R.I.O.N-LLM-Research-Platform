@@ -1,425 +1,248 @@
-# NANO-OS: Nanomaterials Operating System
+# ORION — Optimized Research & Innovation for Organized Nanomaterials
 
-**A comprehensive platform for computational materials research with multi-scale simulations, machine learning, and automated design workflows.**
+**Computational materials-science platform with multi-scale simulation,
+machine learning, and an LLM-driven design loop.**
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/FastAPI-0.100+-green.svg" alt="FastAPI">
+  <img src="https://img.shields.io/badge/FastAPI-0.108+-green.svg" alt="FastAPI">
   <img src="https://img.shields.io/badge/Next.js-14-black.svg" alt="Next.js 14">
   <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT License">
+  <img src="https://img.shields.io/badge/status-prototype--in--refactor-orange.svg" alt="status">
 </p>
 
+> **Honest status:** ORION today is a **prototype with production-grade
+> scaffolding**. Infrastructure (Docker Compose, Alembic, JWT auth, Celery
+> queues, CI/CD skeleton) is real. Most science-facing API endpoints are still
+> stubs while the canonical backend (`src.api.app`) is being brought online.
+> Real implementations exist in `backend/common/` (pymatgen structure parsers,
+> engine wrappers for QE / LAMMPS / mock, GNN / BO / active-learning modules);
+> the work-in-flight is wiring them into the routers, covering them with tests,
+> and validating them against known-physics benchmarks. See
+> [ROADMAP_PROMPTS.md](./ROADMAP_PROMPTS.md) for the 14-phase plan and
+> [docs/history/](./docs/history/) for session-by-session implementation
+> reports.
+
 ---
 
-## 🗺️ Implementation Roadmap
+## Table of contents
 
-**This platform is a prototype with production-grade scaffolding.** Several advertised features (real structure parsing via the API, ML training submission, agent campaign loop, several engines) are currently stubbed.
-
-A detailed **14-phase, ~50-session implementation plan** to bring ORION to scientifically correct, end-to-end functional state is tracked in:
-
-➡️ **[ROADMAP_PROMPTS.md](./ROADMAP_PROMPTS.md)**
-
-Each session in the roadmap is a self-contained, paste-ready prompt with explicit scientific acceptance tests (e.g., Si PBE bandgap ~0.6 eV, Cu EAM melting point ±150 K of 1358 K, Al bulk modulus ±10% of 78 GPa). Work through phases in order; Phase 0 (repo hygiene) unblocks everything else.
+1. [Roadmap](#roadmap)
+2. [Architecture](#architecture)
+3. [Quick start](#quick-start)
+4. [What works today](#what-works-today)
+5. [Repository layout](#repository-layout)
+6. [Documentation](#documentation)
+7. [Contributing](#contributing)
 
 ---
 
-## 🚀 Overview
+## Roadmap
 
-NANO-OS is a modular platform that integrates:
+Implementation is tracked as a **14-phase, ~50-session plan** in
+[ROADMAP_PROMPTS.md](./ROADMAP_PROMPTS.md). Each session is a self-contained,
+paste-ready prompt with physics-based acceptance tests (e.g. Si PBE bandgap
+≈ 0.6 eV, Cu EAM melting ± 150 K of 1358 K, Al bulk modulus ± 10 % of 78 GPa).
 
-- **Multi-Scale Simulations**: DFT (Quantum Espresso), MD (LAMMPS), Continuum, Mesoscale
-- **Machine Learning**: GNN-based property predictions, model training & deployment
-- **Automated Design**: AI-driven materials discovery campaigns with Bayesian optimization
-- **Structure Management**: Upload, parse, and visualize crystal structures (CIF, POSCAR)
-- **Worker System**: Background job processing with Celery
-- **RESTful API**: Comprehensive API for programmatic access
-- **Modern Frontend**: Next.js-based UI with 3D structure visualization
+- **Phase 0** (in progress) — repository hygiene
+- **Phase 1** — data & domain foundation
+- **Phase 2** — job execution spine (Celery + engines)
+- **Phase 3** — DFT engine (Quantum Espresso)
+- **Phase 4** — MD engine (LAMMPS)
+- **Phase 5** — continuum / FEM + kMC mesoscale
+- **Phase 6** — ML features, datasets, baselines, GNN, active learning
+- **Phase 7** — Bayesian optimisation + LLM-driven agent loop
+- **Phase 8** — elastic tensors, phonons, point defects
+- **Phase 9** — frontend end-to-end wiring
+- **Phase 10** — observability & performance
+- **Phase 11** — security hardening
+- **Phase 12** — provenance, reproducibility, compliance
+- **Phase 13** — K8s, CI/CD, DR, 1.0.0 release
 
-## ✨ Key Features
+See [CHANGELOG.md](./CHANGELOG.md) for merged changes.
 
-### 🔬 Simulation Engines
-- **Mock Engine**: Fast testing with realistic fake data
-- **Quantum Espresso (QE)**: DFT calculations (SCF, relaxation, band structure)
-- **LAMMPS**: Classical MD simulations (NVT, NPT, annealing)
-- **Continuum & Mesoscale**: Stubs for FEM and KMC (future integration)
+---
 
-### 🤖 Machine Learning
-- **Stub ML Models**: Deterministic predictions for testing
-- **GNN Infrastructure** (Sessions 14-16):
-  - Feature extraction pipeline for crystal structures
-  - CGCNN-style graph neural networks
-  - Model training and registry system
-  - Inference API with uncertainty quantification
+## Architecture
 
-### 🎯 Materials Design
-- **Design Campaigns**: Multi-iteration optimization loops
-- **Search Algorithms**: Random, genetic, Bayesian optimization, active learning
-- **AGI Integration**: Ready for external AI agent control
-- **Provenance Tracking**: Full reproducibility of design decisions
-
-### 📊 Data Management
-- **PostgreSQL**: Relational data (materials, structures, jobs, results)
-- **Redis**: Caching and Celery broker
-- **Alembic**: Database migrations
-- **Multi-tenancy**: User-based data isolation
-
-## 🏃 Quick Start
-
-### Prerequisites
-
-- **Docker & Docker Compose** (recommended)
-- **OR** Local installation:
-  - Python 3.10+
-  - Node.js 18+
-  - PostgreSQL 14+
-  - Redis 7+
-
-### Option 1: Docker Compose (Recommended)
-
-```bash
-# Clone the repository
-git clone https://github.com/alovladi007/O.R.I.O.N-LLM-Research-Platform.git
-cd O.R.I.O.N-LLM-Research-Platform
-
-# Create environment file
-make env  # or: cp .env.example .env
-
-# Start all services
-make up
-
-# Run database migrations
-make migrate
-
-# Seed database with example data
-make seed
-
-# Check service health
-make health
+```
+┌──────────────────┐    HTTPS     ┌──────────────────────────────┐
+│  Next.js 14 UI   │◀────────────▶│  FastAPI  (src.api.app)      │
+│  (frontend/)     │              │  JWT · pydantic-v2 · SQLAlc. │
+└──────────────────┘              └──────┬───────────────────────┘
+                                         │
+           ┌─────────────────────────────┼─────────────────────────────┐
+           │                             │                             │
+           ▼                             ▼                             ▼
+  ┌──────────────────┐          ┌────────────────┐           ┌──────────────┐
+  │  PostgreSQL      │          │  Redis         │           │  MinIO       │
+  │  (+ pgvector)    │          │  cache + broker│           │  artifacts   │
+  └──────────────────┘          └───────┬────────┘           └──────────────┘
+                                        │
+                                        ▼
+                                ┌──────────────────────────────┐
+                                │  Celery workers              │
+                                │  backend.common.engines.*    │
+                                │    - mock                    │
+                                │    - quantum_espresso (QE)   │
+                                │    - LAMMPS (MD)             │
+                                │    - continuum (FEM)         │
+                                │    - mesoscale (kMC)         │
+                                │  backend.common.ml.*         │
+                                │    - CGCNN-like GNN          │
+                                │    - Bayesian opt            │
+                                │    - active learning         │
+                                └──────────────────────────────┘
 ```
 
-**Access the platform:**
-- **Frontend**: http://localhost:3000 (or 3001)
-- **API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+### Services in `docker-compose.yml`
 
-### Option 2: Local Development
+| Service | Purpose | Default port |
+|---|---|---|
+| `postgres` | Main DB (pgvector-enabled) | 5432 |
+| `redis` | Cache + Celery broker | 6379 |
+| `elasticsearch` | Full-text search | 9200 |
+| `minio` | S3-compatible object storage | 9000 / 9001 |
+| `orion-api` | FastAPI backend | 8000 (host) |
+| `orion-frontend` | Next.js UI | 3002 (host) |
+| `orion-worker` | Celery worker | — |
+| `flower` | Celery monitoring UI | 5555 |
+| `prometheus` | Metrics | 9090 |
+| `grafana` | Dashboards | 3000 |
+| `jupyter` | Notebook sandbox | 8888 |
+
+---
+
+## Quick start
+
+### Prereqs
+
+- Python 3.10 or newer (pyproject pins `^3.10`)
+- Docker + Docker Compose
+- Node 18+ (for the frontend)
+
+### Local backend (no Docker)
 
 ```bash
-# Install Python dependencies
 pip install -r requirements.txt
+pip install -r requirements-dev.txt   # created in Session 0.5
 
-# Install frontend dependencies
-cd frontend && npm install && cd ..
-
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your database credentials
-
-# Run database migrations
-alembic upgrade head
-
-# Seed database
-python scripts/seed_data.py
-
-# Start backend (terminal 1)
-uvicorn src.api.app:app --reload --port 8000
-
-# Start worker (terminal 2)
-celery -A src.worker.celery_app worker --loglevel=info
-
-# Start frontend (terminal 3)
-cd frontend && npm run dev
+cp .env.example .env                  # fill JWT_SECRET_KEY, DATABASE_URL, etc.
+docker-compose up -d postgres redis   # just the deps
+make migrate-up                       # Alembic up
+make dev                              # uvicorn src.api.app:app on :8002
 ```
 
-### Running the Demo
-
-See the platform in action:
+Verify:
 
 ```bash
-# Make sure API server is running first
-make dev  # or: uvicorn src.api.app:app --reload
-
-# In another terminal, run the demo
-python scripts/demo_run.py
-
-# Skip design campaign for faster demo
-python scripts/demo_run.py --skip-campaign
+curl http://localhost:8002/health
+open  http://localhost:8002/docs
 ```
 
-The demo script will:
-1. Create a new material (h-BN)
-2. Upload a crystal structure (CIF format)
-3. Launch a simulation job
-4. Run ML property predictions
-5. Start a design campaign
+Full details in [BACKEND_QUICKSTART.md](./BACKEND_QUICKSTART.md) and
+[QUICK_START.md](./QUICK_START.md).
 
-## 📖 Documentation
-
-Comprehensive documentation is available in the `/docs` folder:
-
-- **[Architecture Overview](docs/architecture.md)**
-  - System architecture and data flow
-  - Service descriptions
-  - Multi-scale integration
-  - AGI loop design
-
-- **[API Reference](docs/api-overview.md)**
-  - Complete endpoint documentation
-  - Request/response examples
-  - Authentication & authorization
-  - Rate limiting & pagination
-
-- **[Simulation Engines](docs/engines.md)**
-  - Engine abstraction layer
-  - Available engines (Mock, QE, LAMMPS)
-  - Adding new engines
-  - Multi-engine workflows
-
-- **[Design Loops & Campaigns](docs/design-loops.md)**
-  - Campaign lifecycle
-  - Search algorithms
-  - Objective functions & constraints
-  - AGI agent integration guide
-
-## 🛠️ Development
-
-### Project Structure
-
-```
-NANO-OS/
-├── backend/
-│   └── common/
-│       ├── engines/      # Simulation engine implementations
-│       ├── ml/           # ML models & property predictions
-│       ├── design/       # Design search algorithms
-│       ├── campaigns/    # Multi-iteration campaign loops
-│       ├── structures/   # Structure parsers
-│       └── provenance/   # Reproducibility tracking
-│
-├── src/
-│   ├── api/
-│   │   ├── app.py       # FastAPI application
-│   │   ├── routes/      # API endpoints
-│   │   └── models/      # SQLAlchemy ORM models
-│   └── worker/          # Celery worker tasks
-│
-├── frontend/            # Next.js frontend
-│   ├── src/
-│   │   ├── app/        # App router pages
-│   │   ├── components/ # React components
-│   │   └── lib/        # Utilities & API client
-│   └── package.json
-│
-├── docs/               # Documentation (Sessions 13+)
-├── scripts/            # Utility scripts
-│   ├── seed_data.py   # Database seeder
-│   └── demo_run.py    # Platform demonstration
-│
-├── tests/              # Test suite
-├── alembic/            # Database migrations
-├── docker-compose.yml  # Docker services
-├── Makefile            # Development commands
-└── pyproject.toml      # Python dependencies
-```
-
-### Common Make Commands
+### Frontend
 
 ```bash
-make help              # Show all available commands
-make up                # Start all services
-make down              # Stop all services
-make logs              # View logs from all services
-make shell-db          # Open PostgreSQL shell
-make migrate           # Run database migrations
-make seed              # Seed database with example data
-make test              # Run test suite
-make lint              # Run code linters
-make format            # Format code (black, isort)
-make status            # Check service status
+cd frontend
+npm install
+npm run dev       # http://localhost:3002
 ```
 
-### Adding a New Simulation Engine
-
-1. Create engine file: `backend/common/engines/my_engine.py`
-2. Inherit from `SimulationEngine` base class
-3. Implement: `prepare_input()`, `execute()`, `parse_output()`
-4. Register in `backend/common/engines/registry.py`
-5. Add workflow templates to `scripts/seed_data.py`
-
-See [docs/engines.md](docs/engines.md) for detailed instructions.
-
-### Adding a New ML Model
-
-1. Implement model: `backend/common/ml/models/my_model.py`
-2. Register in model registry
-3. Add inference route or integrate with existing `/ml/properties`
-4. (Optional) Add training pipeline
-
-See Sessions 14-16 implementation for examples.
-
-## 🧪 Testing
+### Full stack via Docker Compose
 
 ```bash
-# Run all tests
-make test
-
-# Run specific test suites
-pytest tests/test_api.py -v
-pytest tests/test_structures.py -v
-pytest tests/test_engines.py -v
-
-# Run with coverage
-pytest --cov=src --cov-report=html
-
-# Frontend tests
-cd frontend && npm test
+docker-compose up -d
 ```
-
-## 📡 API Examples
-
-### Create a Material
-
-```python
-import httpx
-
-async with httpx.AsyncClient() as client:
-    response = await client.post(
-        "http://localhost:8000/api/materials",
-        json={
-            "name": "Graphene",
-            "formula": "C",
-            "description": "2D carbon allotrope",
-            "tags": ["2D", "conductor"]
-        }
-    )
-    material = response.json()
-    print(f"Created material: {material['id']}")
-```
-
-### Upload a Structure
-
-```python
-cif_content = """
-data_graphene
-_cell_length_a 2.46
-_cell_length_b 2.46
-_cell_length_c 20.0
-...
-"""
-
-response = await client.post(
-    "http://localhost:8000/api/structures",
-    json={
-        "material_id": material["id"],
-        "name": "Graphene monolayer",
-        "file_content": cif_content,
-        "format": "CIF"
-    }
-)
-```
-
-### Launch a Simulation
-
-```python
-response = await client.post(
-    "http://localhost:8000/api/jobs",
-    json={
-        "structure_id": structure["id"],
-        "workflow_template_id": "uuid-of-template",
-        "name": "DFT relaxation",
-        "parameters": {
-            "ecutwfc": 50.0,
-            "kpoints": [6, 6, 1]
-        }
-    }
-)
-job = response.json()
-```
-
-### ML Property Prediction
-
-```python
-response = await client.post(
-    "http://localhost:8000/api/ml/properties",
-    json={
-        "structure_id": structure["id"],
-        "model_name": "STUB"  # or "cgcnn_bandgap_v1"
-    }
-)
-predictions = response.json()
-print(f"Predicted bandgap: {predictions['bandgap']} eV")
-```
-
-See [docs/api-overview.md](docs/api-overview.md) for complete API documentation.
-
-## 🎯 Sessions & Milestones
-
-NANO-OS is developed through incremental sessions:
-
-- **Sessions 1-3**: Core infrastructure, database models, structure parsing
-- **Sessions 4-6**: Job orchestration, QE engine, ML predictions (stub)
-- **Sessions 7-9**: Frontend structure viewer, job dashboard, UI polish
-- **Sessions 10-12**: Authentication, multi-scale engines, design campaigns
-- **Session 13** ✅: Documentation, seeding, developer convenience
-- **Session 14** 🚧: ML infrastructure (feature extraction, dataset builder)
-- **Session 15** 🚧: GNN model integration (CGCNN-style)
-- **Session 16** 🚧: Model training pipeline & registry
-- **Session 17** 🚧: LAMMPS integration for MD simulations
-
-See `SESSIONS_*.md` files for detailed implementation notes.
-
-## 🤖 AGI Integration
-
-NANO-OS is designed to be controlled by AI agents. External agents can:
-
-1. **Read** all data via REST API
-2. **Submit** structures, jobs, and campaigns programmatically
-3. **Monitor** progress through status endpoints (future: WebSockets)
-4. **Analyze** results and propose next candidates
-5. **Orchestrate** multi-scale workflows
-
-Example: An AGI agent running a materials discovery campaign can propose candidates based on past iterations, submit them for evaluation (ML or DFT), analyze results, and iteratively refine the search strategy.
-
-See [docs/design-loops.md](docs/design-loops.md) for AGI integration patterns.
-
-## 🔒 Security & Multi-Tenancy
-
-- **Authentication**: JWT-based (Sessions 10-12)
-- **Authorization**: Row-level security via `owner_id`
-- **Input Validation**: Pydantic schemas on all API inputs
-- **SQL Injection**: Prevented by SQLAlchemy ORM
-- **Rate Limiting**: Configurable per endpoint
-
-## 🌟 Future Enhancements
-
-- [ ] Real-time updates via WebSocket
-- [ ] HPC cluster integration (SLURM submission)
-- [ ] Advanced GNN architectures (ALIGNN, M3GNET)
-- [ ] Experiment-in-the-loop with lab automation
-- [ ] Multi-objective Pareto optimization
-- [ ] Federated learning for collaborative model training
-- [ ] Knowledge graph integration (Neo4j)
-
-## 📝 License
-
-MIT License. See [LICENSE](LICENSE) for details.
-
-## 🙏 Acknowledgments
-
-- **Quantum Espresso**: DFT simulations
-- **LAMMPS**: Molecular dynamics
-- **PyMatGen**: Materials analysis
-- **ASE**: Atomic simulation environment
-- **3Dmol.js**: Structure visualization
-- Materials Project, OQMD, and the open materials science community
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/alovladi007/O.R.I.O.N-LLM-Research-Platform/issues)
-- **Documentation**: [/docs](/docs) folder
-- **Email**: Contact repository maintainers
 
 ---
 
-**Built for materials scientists, by materials scientists (with AI assistance).**
+## What works today
+
+Updated as each Phase 0 session lands. If a feature isn't listed here, treat
+it as stubbed or WIP.
+
+**Merged (Phase 0 Sessions 0.1 + 0.2):**
+
+- Single canonical FastAPI entry point (`src.api.app:app`) on port 8002
+- Pydantic v2 settings with CSV-aware env parsing for `CORS_ORIGINS`
+- Pre-refactor `src/*` packages and Neo4j removed — cleaner dependency graph
+- Docker Compose services reconciled (`orion-frontend` now builds the real
+  Next.js Dockerfile; `orion-worker` points at the real Celery app)
+
+**Still broken end-to-end (tracked in roadmap):**
+
+- `src/api/app:app` import still blocked by stale imports in
+  `src/api/models/__init__.py` — Session 1.2.
+- Structure parse/export API routes return mock data even though
+  `backend/common/structures/` has real pymatgen parsers — Session 1.1.
+- ML training submission, job cancellation, agent campaign loop — Sessions
+  1.4, 6.4, 7.3.
+- QE / LAMMPS engines wired but not benchmark-validated — Phase 3, Phase 4.
+- Only 2 test files at Phase 0 start; Session 0.5 builds the real harness.
+
+---
+
+## Repository layout
+
+```
+src/
+  api/          Canonical FastAPI backend (routers, models, schemas, auth)
+  worker/       Celery worker (job execution)
+backend/
+  common/       Domain logic shared by API and workers
+    structures/   pymatgen-based structure parsers
+    engines/      mock / QE / LAMMPS / continuum / mesoscale
+    ml/           features, datasets, GNN, BO, active learning
+    campaigns/    design-campaign orchestration
+    experiments/  lab instrument mocks
+frontend/         Next.js 14 UI (TypeScript + Tailwind + MUI)
+sdk/python/       Standalone Python SDK (separate package)
+alembic/          DB migrations
+docker/           Per-service Dockerfiles
+k8s/              Kubernetes manifests (Phase 13)
+scripts/          One-off operational scripts + smoke tests
+tests/            Test suite (Session 0.5 will grow this)
+docs/
+  guides/         User-facing guides (setup, migrations, ML usage)
+  history/        Per-session implementation reports (append-only log)
+examples/
+  marketing/      Standalone marketing demos (not the real frontend)
+ROADMAP_PROMPTS.md   14-phase implementation plan
+CHANGELOG.md         Merged changes
+```
+
+---
+
+## Documentation
+
+- **[ROADMAP_PROMPTS.md](./ROADMAP_PROMPTS.md)** — the plan
+- **[CHANGELOG.md](./CHANGELOG.md)** — what's been merged
+- **[QUICK_START.md](./QUICK_START.md)** — shortest path to a running system
+- **[BACKEND_QUICKSTART.md](./BACKEND_QUICKSTART.md)** — backend dev setup
+- **[DEPLOYMENT.md](./DEPLOYMENT.md)** — production deployment (being revised
+  in Phase 13)
+- **[docs/guides/](./docs/guides/)** — migrations, ML prediction,
+  orchestrator, engines quick-start, macOS setup
+- **[docs/history/](./docs/history/)** — per-session reports and archived
+  pre-refactor status documents
+
+---
+
+## Contributing
+
+1. Check [ROADMAP_PROMPTS.md](./ROADMAP_PROMPTS.md) for the current phase.
+2. Work on a per-session branch: `phase-N-session-M-<slug>`.
+3. Add a session report in `docs/history/phase_N_session_M_report.md`
+   documenting what was done, scope expansions if any, and known blockers
+   passed to the next session.
+4. Keep the acceptance tests from the roadmap honest — do not mark a session
+   complete with numerically wrong physics.
+
+---
+
+## License
+
+MIT. See [LICENSE](./LICENSE).
