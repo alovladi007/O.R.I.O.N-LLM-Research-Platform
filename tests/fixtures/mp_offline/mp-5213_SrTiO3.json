@@ -1,0 +1,10 @@
+{
+  "mp_id": "mp-5213",
+  "formula": "SrTiO3",
+  "cif": "data_SrTiO3\n_cell_length_a    3.94513\n_cell_length_b    3.94513\n_cell_length_c    3.94513\n_cell_angle_alpha 90\n_cell_angle_beta  90\n_cell_angle_gamma 90\n_symmetry_space_group_name_H-M   'P 1'\n_symmetry_Int_Tables_number 1\nloop_\n_atom_site_label\n_atom_site_type_symbol\n_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\n_atom_site_occupancy\nSr1 Sr 0.5 0.5 0.5 1.0\nTi1 Ti 0.0 0.0 0.0 1.0\nO1  O  0.5 0.0 0.0 1.0\nO2  O  0.0 0.5 0.0 1.0\nO3  O  0.0 0.0 0.5 1.0\n",
+  "bandgap": 1.83,
+  "formation_energy_per_atom": -3.55,
+  "density": 5.11,
+  "source": "materials_project",
+  "notes": "Cubic ABO3 perovskite. Written in P1 to list all 5 atoms explicitly; SpacegroupAnalyzer at symprec=0.01 recovers Pm-3m (221)."
+}

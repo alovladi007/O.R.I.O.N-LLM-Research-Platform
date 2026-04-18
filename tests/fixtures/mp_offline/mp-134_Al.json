@@ -1,0 +1,10 @@
+{
+  "mp_id": "mp-134",
+  "formula": "Al",
+  "cif": "data_Al\n_cell_length_a    4.04595\n_cell_length_b    4.04595\n_cell_length_c    4.04595\n_cell_angle_alpha 90\n_cell_angle_beta  90\n_cell_angle_gamma 90\n_symmetry_space_group_name_H-M   'F m -3 m'\n_symmetry_Int_Tables_number   225\nloop_\n_atom_site_label\n_atom_site_type_symbol\n_atom_site_fract_x\n_atom_site_fract_y\n_atom_site_fract_z\n_atom_site_occupancy\nAl1 Al 0.0 0.0 0.0 1.0\n",
+  "bandgap": 0.0,
+  "formation_energy_per_atom": 0.0,
+  "density": 2.70,
+  "source": "materials_project",
+  "notes": "FCC aluminum, elemental metal reference (bulk modulus ~78 GPa)."
+}
