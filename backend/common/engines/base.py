@@ -14,7 +14,8 @@ This ensures a consistent interface across all simulation backends.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -181,3 +182,68 @@ class SimulationEngine(ABC):
 
         # Basic validation - subclasses can override for engine-specific checks
         return True
+
+    def execute_command(
+        self,
+        cmd: List[str],
+        run_dir: Path,
+        *,
+        execution_kind: str = "local",
+        cpus: int = 1,
+        gpus: int = 0,
+        memory_gb: Optional[int] = None,
+        walltime_minutes: Optional[int] = None,
+        queue: Optional[str] = None,
+        account: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+    ) -> "ExecutionResult":
+        """Run *cmd* via the execution backend and return an :class:`ExecutionResult`.
+
+        Thin wrapper that:
+        1. Resolves the backend (``local`` or ``slurm``) via
+           :func:`backend.common.execution.get_execution_backend`.
+        2. Uses :func:`backend.common.execution.local.sync_execute` to run
+           submit → poll-loop → terminal state under ``asyncio.run``.
+        3. Reads stdout/stderr from the backend's run-dir files and
+           packages them into :class:`ExecutionResult` so legacy parsers
+           keep working.
+
+        Session 2.3: engines that called ``subprocess.run`` / ``Popen``
+        directly use this helper instead. Behavior on `local` is
+        equivalent; `slurm` gets it for free.
+        """
+        from backend.common.execution import (
+            JobState,
+            Resources,
+            get_execution_backend,
+            sync_execute,
+        )
+
+        backend = get_execution_backend(execution_kind)
+        resources = Resources(
+            cpus=cpus,
+            gpus=gpus,
+            memory_gb=memory_gb,
+            walltime_minutes=walltime_minutes,
+            queue=queue,
+            account=account,
+            env=env or {},
+        )
+        state = sync_execute(backend, cmd, Path(run_dir), resources)
+
+        # Read stdout/stderr from the files the backend wrote.
+        stdout_path = Path(run_dir) / "stdout.txt"
+        stderr_path = Path(run_dir) / "stderr.txt"
+        stdout = stdout_path.read_text(errors="replace") if stdout_path.exists() else ""
+        stderr = stderr_path.read_text(errors="replace") if stderr_path.exists() else ""
+
+        if state == JobState.COMPLETED:
+            return ExecutionResult(success=True, returncode=0, stdout=stdout, stderr=stderr)
+        if state == JobState.CANCELLED:
+            return ExecutionResult(
+                success=False, returncode=-15, stdout=stdout, stderr=stderr or "cancelled",
+            )
+        # FAILED or any unknown terminal → non-zero returncode marker.
+        return ExecutionResult(
+            success=False, returncode=1, stdout=stdout, stderr=stderr or f"state={state.value}",
+        )

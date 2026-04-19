@@ -1,370 +1,287 @@
-"""
-SLURM execution backend.
+"""SlurmBackend — submit via sbatch/squeue/scancel.
 
-Session 27: HPC and Cloud Scaling
+Two transport modes:
+
+1. **Local submit** (default): run the SLURM commands on this host via
+   ``asyncio.create_subprocess_exec``. The worker is assumed to be on
+   the cluster's login node.
+2. **Remote submit**: when ``host`` is set, tunnel through SSH using
+   ``asyncssh``. ``asyncssh`` is an optional dep; we import lazily so
+   the module loads in environments without it.
+
+The Session 2.3 roadmap ships the local-submit path end-to-end and
+keeps the remote path narrowly useful: remote tests require
+``ORION_SLURM_HOST`` + a keyfile (``@pytest.mark.requires_slurm``).
 """
 
+from __future__ import annotations
+
+import asyncio
 import logging
-import subprocess
 import re
+import shlex
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, List, Optional
 
-from .base import ExecutionBackend, JobResources, JobStatus
+from .base import (
+    ExecutionBackend,
+    JobState,
+    Resources,
+    SubmissionHandle,
+    TimedOut,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class SlurmExecutionBackend(ExecutionBackend):
+_SUBMITTED_RE = re.compile(r"Submitted batch job (\d+)")
+
+
+class SlurmSubmitError(RuntimeError):
+    """``sbatch`` rejected the submission (malformed script, bad partition, etc.)."""
+
+
+class SlurmBackend(ExecutionBackend):
+    """sbatch-based execution backend.
+
+    Parameters
+    ----------
+    host
+        Remote SLURM submit host. ``None`` = run ``sbatch`` locally.
+    user, key_path
+        SSH credentials used when *host* is set. Unused in local mode.
+    partition
+        Default ``--partition`` when a :class:`Resources` doesn't set one.
     """
-    SLURM execution backend using sbatch, squeue, scancel.
 
-    Submits jobs to a SLURM cluster via command-line tools.
-    """
+    kind = "slurm"
 
-    def __init__(self, config: Dict[str, Any]):
-        """
-        Initialize SLURM backend.
-
-        Config options:
-        - partition: SLURM partition (default: None)
-        - account: SLURM account (default: None)
-        - qos: Quality of Service (default: None)
-        - modules: List of modules to load (default: [])
-        - working_dir_base: Base directory for job files (default: ~/slurm_jobs)
-        """
-        super().__init__(config)
-        self.partition = config.get("partition")
-        self.account = config.get("account")
-        self.qos = config.get("qos")
-        self.modules = config.get("modules", [])
-        self.working_dir_base = Path(config.get("working_dir_base", "~/slurm_jobs")).expanduser()
-        self.working_dir_base.mkdir(parents=True, exist_ok=True)
-
-    def submit(
+    def __init__(
         self,
-        job_script: str,
-        resources: JobResources,
-        job_name: str,
-        working_dir: str
-    ) -> str:
-        """
-        Submit job to SLURM via sbatch.
+        *,
+        host: Optional[str] = None,
+        user: Optional[str] = None,
+        key_path: Optional[str] = None,
+        partition: Optional[str] = None,
+    ) -> None:
+        self.host = host
+        self.user = user
+        self.key_path = key_path
+        self.partition = partition
 
-        Args:
-            job_script: Shell script to execute
-            resources: Resource requirements
-            job_name: Job name
-            working_dir: Working directory
+    # ------------------------------------------------------------------
+    # submit
+    # ------------------------------------------------------------------
+    async def submit(
+        self,
+        cmd: List[str],
+        run_dir: Path,
+        resources: Resources,
+    ) -> SubmissionHandle:
+        if not cmd:
+            raise ValueError("SlurmBackend.submit: cmd is empty")
+        run_dir = Path(run_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
 
-        Returns:
-            External job ID (SLURM job ID)
-        """
-        # Create working directory
-        work_path = Path(working_dir)
-        work_path.mkdir(parents=True, exist_ok=True)
+        # Generate batch script with SBATCH directives.
+        script = self._render_batch_script(cmd, run_dir, resources)
+        script_path = run_dir / "orion-submit.sh"
+        script_path.write_text(script)
+        script_path.chmod(0o755)
 
-        # Generate SLURM batch script
-        batch_script = self._generate_slurm_script(
-            job_script=job_script,
-            resources=resources,
-            job_name=job_name,
-            working_dir=str(work_path)
+        rc, stdout, stderr = await self._run_slurm_cmd(["sbatch", str(script_path)])
+        if rc != 0:
+            raise SlurmSubmitError(
+                f"sbatch rc={rc} stderr={stderr.strip()!r} stdout={stdout.strip()!r}"
+            )
+        m = _SUBMITTED_RE.search(stdout)
+        if not m:
+            raise SlurmSubmitError(f"could not parse sbatch output: {stdout!r}")
+        slurm_jobid = m.group(1)
+
+        return SubmissionHandle(
+            backend_kind=self.kind,
+            external_id=slurm_jobid,
+            run_dir=run_dir,
+            submitted_at_epoch=time.time(),
+            meta={
+                "cmd": list(cmd),
+                "partition": resources.queue or self.partition,
+                "walltime_seconds": resources.walltime_seconds(),
+            },
         )
 
-        # Write batch script to file
-        script_path = work_path / "slurm_job.sh"
-        with open(script_path, "w") as f:
-            f.write(batch_script)
+    # ------------------------------------------------------------------
+    # poll
+    # ------------------------------------------------------------------
+    async def poll(self, handle: SubmissionHandle) -> JobState:
+        jobid = handle.external_id
 
-        # Submit via sbatch
-        logger.info(f"Submitting SLURM job: {job_name}")
+        walltime_sec = (handle.meta or {}).get("walltime_seconds")
+        if walltime_sec and time.time() - handle.submitted_at_epoch > walltime_sec:
+            await self.cancel(handle)
+            raise TimedOut(f"slurm jobid={jobid} exceeded walltime {walltime_sec}s")
 
-        try:
-            result = subprocess.run(
-                ["sbatch", str(script_path)],
-                cwd=str(work_path),
-                capture_output=True,
-                text=True,
-                check=True
-            )
-
-            # Parse job ID from sbatch output
-            # Expected format: "Submitted batch job 12345"
-            match = re.search(r"Submitted batch job (\d+)", result.stdout)
-            if not match:
-                raise RuntimeError(f"Could not parse job ID from sbatch output: {result.stdout}")
-
-            slurm_job_id = match.group(1)
-            logger.info(f"Job submitted successfully. SLURM job ID: {slurm_job_id}")
-
-            return slurm_job_id
-
-        except subprocess.CalledProcessError as e:
-            logger.error(f"sbatch failed: {e.stderr}")
-            raise RuntimeError(f"Failed to submit SLURM job: {e.stderr}")
-
-    def check_status(self, external_job_id: str) -> JobStatus:
-        """
-        Check SLURM job status via squeue.
-
-        Args:
-            external_job_id: SLURM job ID
-
-        Returns:
-            Job status
-        """
-        try:
-            # Query job status with squeue
-            result = subprocess.run(
-                ["squeue", "-j", external_job_id, "--format=%T,%r"],
-                capture_output=True,
-                text=True,
-                check=False  # Don't raise on non-zero exit (job might be completed)
-            )
-
-            # If job not found in queue, check sacct for completed jobs
-            if result.returncode != 0 or not result.stdout.strip():
-                return self._check_completed_job(external_job_id)
-
-            # Parse squeue output
-            # Format: STATE,REASON
-            # Skip header line
-            lines = result.stdout.strip().split("\n")
-            if len(lines) < 2:
-                # Job not in queue, check sacct
-                return self._check_completed_job(external_job_id)
-
-            state_line = lines[1].strip()
-            state, reason = state_line.split(",", 1) if "," in state_line else (state_line, "")
-
-            # Map SLURM states to our JobStatus
-            status_map = {
-                "PENDING": "PENDING",
-                "RUNNING": "RUNNING",
-                "SUSPENDED": "RUNNING",  # Treat suspended as running
-                "COMPLETING": "RUNNING",
-                "COMPLETED": "COMPLETED",
-                "CANCELLED": "CANCELLED",
-                "FAILED": "FAILED",
-                "TIMEOUT": "FAILED",
-                "NODE_FAIL": "FAILED",
-                "PREEMPTED": "FAILED",
-                "OUT_OF_MEMORY": "FAILED"
-            }
-
-            job_status = status_map.get(state, "UNKNOWN")
-
-            return JobStatus(
-                external_job_id=external_job_id,
-                status=job_status,
-                reason=reason if reason else None
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to check SLURM job status: {e}")
-            return JobStatus(
-                external_job_id=external_job_id,
-                status="UNKNOWN",
-                error_message=str(e)
-            )
-
-    def _check_completed_job(self, external_job_id: str) -> JobStatus:
-        """
-        Check completed job status using sacct.
-
-        Args:
-            external_job_id: SLURM job ID
-
-        Returns:
-            Job status
-        """
-        try:
-            result = subprocess.run(
-                ["sacct", "-j", external_job_id, "--format=State,ExitCode", "--noheader", "--parsable2"],
-                capture_output=True,
-                text=True,
-                check=False
-            )
-
-            if result.returncode != 0 or not result.stdout.strip():
-                logger.warning(f"Job {external_job_id} not found in squeue or sacct")
-                return JobStatus(
-                    external_job_id=external_job_id,
-                    status="UNKNOWN"
-                )
-
-            # Parse sacct output
-            # Format: State|ExitCode
-            lines = result.stdout.strip().split("\n")
-            if not lines:
-                return JobStatus(external_job_id=external_job_id, status="UNKNOWN")
-
-            # Take first line (main job, not job steps)
-            state_line = lines[0].strip()
-            parts = state_line.split("|")
-            state = parts[0].strip()
-            exit_code_str = parts[1].strip() if len(parts) > 1 else "0:0"
-
-            # Parse exit code (format: "exit_code:signal")
-            exit_code = 0
-            if ":" in exit_code_str:
-                exit_code = int(exit_code_str.split(":")[0])
-
-            # Map state to our status
-            if state == "COMPLETED":
-                job_status = "COMPLETED" if exit_code == 0 else "FAILED"
-            elif state in ["FAILED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY"]:
-                job_status = "FAILED"
-            elif state == "CANCELLED":
-                job_status = "CANCELLED"
-            else:
-                job_status = "UNKNOWN"
-
-            return JobStatus(
-                external_job_id=external_job_id,
-                status=job_status,
-                exit_code=exit_code if exit_code != 0 else None
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to check completed job with sacct: {e}")
-            return JobStatus(
-                external_job_id=external_job_id,
-                status="UNKNOWN",
-                error_message=str(e)
-            )
-
-    def cancel(self, external_job_id: str) -> bool:
-        """
-        Cancel SLURM job via scancel.
-
-        Args:
-            external_job_id: SLURM job ID
-
-        Returns:
-            True if cancelled successfully
-        """
-        try:
-            logger.info(f"Cancelling SLURM job {external_job_id}")
-
-            result = subprocess.run(
-                ["scancel", external_job_id],
-                capture_output=True,
-                text=True,
-                check=False
-            )
-
-            if result.returncode == 0:
-                logger.info(f"Job {external_job_id} cancelled successfully")
-                return True
-            else:
-                logger.warning(f"scancel returned non-zero exit code: {result.stderr}")
-                # Job might already be finished, check status
-                status = self.check_status(external_job_id)
-                if status.status in ["COMPLETED", "FAILED", "CANCELLED"]:
-                    logger.info(f"Job {external_job_id} already finished")
-                    return True
-                return False
-
-        except Exception as e:
-            logger.error(f"Failed to cancel SLURM job: {e}")
-            return False
-
-    def fetch_results(
-        self,
-        external_job_id: str,
-        dest_path: str
-    ) -> bool:
-        """
-        Fetch results from SLURM job working directory.
-
-        For local SLURM clusters, files are already accessible.
-        For remote clusters, this would use scp/rsync.
-
-        Args:
-            external_job_id: SLURM job ID
-            dest_path: Destination path
-
-        Returns:
-            True if successful
-        """
-        # For local SLURM, files are already in the working directory
-        # For remote SLURM, would need to implement scp/rsync here
-        logger.info(
-            f"SLURM job {external_job_id}: assuming results already in working directory "
-            f"(local cluster). For remote clusters, implement scp/rsync."
+        # Ask squeue first; empty stdout means the job is no longer
+        # tracked — go to sacct for a terminal verdict.
+        rc, stdout, _ = await self._run_slurm_cmd(
+            ["squeue", "-j", jobid, "-h", "-o", "%T"]
         )
-        return True
+        if rc == 0 and stdout.strip():
+            return _translate_squeue_state(stdout.strip())
 
-    def _generate_slurm_script(
+        # Fallthrough to sacct for completed jobs.
+        rc_s, stdout_s, _ = await self._run_slurm_cmd(
+            ["sacct", "-j", jobid, "--format=State,ExitCode", "-n", "-P"]
+        )
+        if rc_s != 0 or not stdout_s.strip():
+            return JobState.FAILED  # can't find it anywhere → surface
+        first_line = stdout_s.strip().splitlines()[0]
+        parts = first_line.split("|", 1)
+        state = parts[0].strip().split()[0]
+        return _translate_sacct_state(state)
+
+    # ------------------------------------------------------------------
+    # cancel
+    # ------------------------------------------------------------------
+    async def cancel(self, handle: SubmissionHandle) -> None:
+        await self._run_slurm_cmd(["scancel", handle.external_id])
+
+    # ------------------------------------------------------------------
+    # fetch_artifacts
+    # ------------------------------------------------------------------
+    async def fetch_artifacts(
         self,
-        job_script: str,
-        resources: JobResources,
-        job_name: str,
-        working_dir: str
+        handle: SubmissionHandle,
+        dest_dir: Path,
+    ) -> Path:
+        # Local SLURM: files land in run_dir and are already visible.
+        # Remote SLURM: rsync over SSH. We ship the no-op path and
+        # leave the rsync branch for the first remote deployment.
+        if self.host is None:
+            return handle.run_dir
+        await self._rsync_down(handle.run_dir, dest_dir)
+        return dest_dir
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+    def _render_batch_script(
+        self,
+        cmd: List[str],
+        run_dir: Path,
+        resources: Resources,
     ) -> str:
-        """
-        Generate SLURM batch script with directives.
-
-        Args:
-            job_script: User's job script
-            resources: Resource requirements
-            job_name: Job name
-            working_dir: Working directory
-
-        Returns:
-            Complete SLURM batch script
-        """
-        lines = ["#!/bin/bash"]
-
-        # SLURM directives
-        lines.append(f"#SBATCH --job-name={job_name}")
-        lines.append(f"#SBATCH --output={working_dir}/slurm-%j.out")
-        lines.append(f"#SBATCH --error={working_dir}/slurm-%j.err")
-
-        # Resources
-        lines.append(f"#SBATCH --nodes={resources.nodes}")
-        lines.append(f"#SBATCH --ntasks-per-node={resources.cores_per_node}")
-
-        if resources.memory_gb:
-            lines.append(f"#SBATCH --mem={resources.memory_gb}G")
-
-        if resources.walltime_hours:
-            # Convert hours to HH:MM:SS
-            hours = int(resources.walltime_hours)
-            minutes = int((resources.walltime_hours - hours) * 60)
-            lines.append(f"#SBATCH --time={hours:02d}:{minutes:02d}:00")
-
+        lines: List[str] = ["#!/bin/bash"]
+        lines.append(f"#SBATCH --job-name=orion-{run_dir.name}")
+        lines.append(f"#SBATCH --output={run_dir}/stdout.txt")
+        lines.append(f"#SBATCH --error={run_dir}/stderr.txt")
+        lines.append(f"#SBATCH --cpus-per-task={max(1, resources.cpus)}")
         if resources.gpus:
             lines.append(f"#SBATCH --gres=gpu:{resources.gpus}")
-
-        # Optional directives
-        if self.partition:
-            lines.append(f"#SBATCH --partition={self.partition}")
-
-        if self.account:
-            lines.append(f"#SBATCH --account={self.account}")
-
-        if self.qos:
-            lines.append(f"#SBATCH --qos={self.qos}")
-
+        if resources.memory_gb:
+            lines.append(f"#SBATCH --mem={resources.memory_gb}G")
+        if resources.walltime_minutes:
+            h = resources.walltime_minutes // 60
+            m = resources.walltime_minutes % 60
+            lines.append(f"#SBATCH --time={h:02d}:{m:02d}:00")
+        partition = resources.queue or self.partition
+        if partition:
+            lines.append(f"#SBATCH --partition={partition}")
+        if resources.account:
+            lines.append(f"#SBATCH --account={resources.account}")
         lines.append("")
-
-        # Load modules
-        if self.modules:
-            lines.append("# Load modules")
-            for module in self.modules:
-                lines.append(f"module load {module}")
-            lines.append("")
-
-        # Change to working directory
-        lines.append(f"cd {working_dir}")
+        # Engine env
+        for k, v in (resources.env or {}).items():
+            lines.append(f"export {shlex.quote(k)}={shlex.quote(v)}")
+        lines.append(f"cd {shlex.quote(str(run_dir))}")
         lines.append("")
+        lines.append(" ".join(shlex.quote(x) for x in cmd))
+        return "\n".join(lines) + "\n"
 
-        # User's job script
-        lines.append("# User job script")
-        lines.append(job_script)
+    async def _run_slurm_cmd(self, argv: List[str]) -> tuple[int, str, str]:
+        """Run a SLURM command locally or via SSH."""
+        if self.host is None:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_b, stderr_b = await proc.communicate()
+            return proc.returncode or 0, stdout_b.decode(), stderr_b.decode()
+        return await self._run_ssh_cmd(argv)
 
-        return "\n".join(lines)
+    async def _run_ssh_cmd(self, argv: List[str]) -> tuple[int, str, str]:
+        try:
+            import asyncssh  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError(
+                "SlurmBackend remote mode requires `asyncssh` — "
+                "install with `pip install asyncssh`."
+            ) from exc
+
+        kwargs: dict[str, Any] = {}
+        if self.user:
+            kwargs["username"] = self.user
+        if self.key_path:
+            kwargs["client_keys"] = [self.key_path]
+        kwargs["known_hosts"] = None  # cluster SSH is typically trusted
+
+        command = " ".join(shlex.quote(x) for x in argv)
+        async with asyncssh.connect(self.host, **kwargs) as conn:
+            result = await conn.run(command, check=False)
+            return int(result.exit_status or 0), str(result.stdout or ""), str(result.stderr or "")
+
+    async def _rsync_down(self, remote_dir: Path, dest_dir: Path) -> None:
+        try:
+            import asyncssh  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError(
+                "remote SLURM fetch_artifacts requires `asyncssh`."
+            ) from exc
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        kwargs: dict[str, Any] = {}
+        if self.user:
+            kwargs["username"] = self.user
+        if self.key_path:
+            kwargs["client_keys"] = [self.key_path]
+        kwargs["known_hosts"] = None
+
+        async with asyncssh.connect(self.host, **kwargs) as conn:
+            async with conn.start_sftp_client() as sftp:
+                await sftp.get(str(remote_dir), str(dest_dir), recurse=True)
+
+
+# ---------------------------------------------------------------------------
+# State translators
+# ---------------------------------------------------------------------------
+
+
+_SQUEUE_MAP = {
+    "PENDING": JobState.PENDING,
+    "CONFIGURING": JobState.PENDING,
+    "RUNNING": JobState.RUNNING,
+    "SUSPENDED": JobState.RUNNING,
+    "COMPLETING": JobState.RUNNING,
+    "COMPLETED": JobState.COMPLETED,
+    "CANCELLED": JobState.CANCELLED,
+    "FAILED": JobState.FAILED,
+    "TIMEOUT": JobState.FAILED,
+    "NODE_FAIL": JobState.FAILED,
+    "OUT_OF_MEMORY": JobState.FAILED,
+    "PREEMPTED": JobState.FAILED,
+}
+
+
+def _translate_squeue_state(raw: str) -> JobState:
+    return _SQUEUE_MAP.get(raw.upper(), JobState.RUNNING)
+
+
+def _translate_sacct_state(raw: str) -> JobState:
+    if raw.upper().startswith("CANCELLED"):
+        return JobState.CANCELLED
+    if raw.upper() == "COMPLETED":
+        return JobState.COMPLETED
+    return JobState.FAILED

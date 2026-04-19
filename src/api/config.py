@@ -223,6 +223,18 @@ class Settings(BaseSettings):
     minio_bucket: str = "orion-data"
 
     # ------------------------------------------------------------------
+    # SLURM (Session 2.3)
+    #
+    # Left unset → worker runs the Local execution backend. Setting
+    # ORION_SLURM_HOST flips the SLURM backend into remote mode and
+    # requires asyncssh + a key path.
+    # ------------------------------------------------------------------
+    slurm_host: Optional[str] = Field(None, alias="ORION_SLURM_HOST")
+    slurm_user: Optional[str] = Field(None, alias="ORION_SLURM_USER")
+    slurm_key_path: Optional[str] = Field(None, alias="ORION_SLURM_KEY_PATH")
+    slurm_partition: Optional[str] = Field(None, alias="ORION_SLURM_PARTITION")
+
+    # ------------------------------------------------------------------
     # Rate limiting
     # ------------------------------------------------------------------
     rate_limit_enabled: bool = True

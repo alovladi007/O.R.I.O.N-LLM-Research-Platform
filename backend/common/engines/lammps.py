@@ -466,36 +466,20 @@ class LAMMPSEngine(SimulationEngine):
 
         logger.info(f"Executing LAMMPS: {self.lammps_command}")
 
+        # Session 2.3: route through the execution backend so local /
+        # SLURM switch is a parameter, not an engine rewrite.
+        exec_kind = (getattr(self, "parameters", None) or {}).get("execution", {}).get(
+            "kind", "local"
+        )
+        walltime_minutes = (getattr(self, "parameters", None) or {}).get(
+            "execution", {}
+        ).get("walltime_minutes") or max(1, timeout // 60)
         try:
-            result = subprocess.run(
+            return self.execute_command(
                 [self.lammps_command, "-in", str(input_file), "-log", str(log_file)],
-                cwd=input_dir,
-                capture_output=True,
-                timeout=timeout,
-                text=True
-            )
-
-            success = result.returncode == 0
-
-            if success:
-                logger.info("LAMMPS execution completed successfully")
-            else:
-                logger.error(f"LAMMPS execution failed with code {result.returncode}")
-
-            return ExecutionResult(
-                success=success,
-                returncode=result.returncode,
-                stdout=result.stdout,
-                stderr=result.stderr
-            )
-
-        except subprocess.TimeoutExpired:
-            logger.error(f"LAMMPS execution timed out after {timeout}s")
-            return ExecutionResult(
-                success=False,
-                returncode=-1,
-                stdout="",
-                stderr=f"Execution timed out after {timeout} seconds"
+                run_dir=input_dir,
+                execution_kind=exec_kind,
+                walltime_minutes=walltime_minutes,
             )
         except FileNotFoundError:
             logger.error(f"LAMMPS executable not found: {self.lammps_command}")
@@ -503,7 +487,7 @@ class LAMMPSEngine(SimulationEngine):
                 success=False,
                 returncode=-1,
                 stdout="",
-                stderr=f"LAMMPS executable not found: {self.lammps_command}"
+                stderr=f"LAMMPS executable not found: {self.lammps_command}",
             )
 
     def parse_output(

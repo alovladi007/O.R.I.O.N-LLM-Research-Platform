@@ -474,25 +474,34 @@ class QuantumEspressoEngine(SimulationEngine):
             tmp_dir = os.path.join(self.work_dir, "tmp")
             os.makedirs(tmp_dir, exist_ok=True)
 
-            # Execute QE
-            with open(self.output_file, 'w') as out_f:
-                process = subprocess.Popen(
-                    [self.qe_executable, "-in", self.input_file],
-                    stdout=out_f,
-                    stderr=subprocess.PIPE,
-                    cwd=self.work_dir,
-                    text=True
-                )
+            # Execute QE via the Session 2.3 execution backend
+            # (LocalBackend or SlurmBackend depending on job inputs).
+            exec_kind = (self.parameters or {}).get("execution", {}).get("kind", "local")
+            result = self.execute_command(
+                [self.qe_executable, "-in", self.input_file],
+                run_dir=self.work_dir,
+                execution_kind=exec_kind,
+                cpus=(self.parameters or {}).get("execution", {}).get("cpus", 1),
+                walltime_minutes=(self.parameters or {}).get("execution", {}).get(
+                    "walltime_minutes"
+                ),
+            )
 
-                # Wait for completion (could add progress monitoring here)
-                _, stderr = process.communicate()
+            # Keep the legacy self.output_file contract: parsers expect
+            # QE's pw.x stdout to live there. Copy stdout captured by
+            # the backend into the legacy location.
+            try:
+                with open(self.output_file, "w") as out_f:
+                    out_f.write(result.stdout)
+            except OSError as io_exc:
+                self.logger.warning("could not write %s: %s", self.output_file, io_exc)
 
-                if process.returncode != 0:
-                    error_msg = f"Quantum ESPRESSO failed with return code {process.returncode}"
-                    if stderr:
-                        error_msg += f"\nStderr: {stderr}"
-                    self.logger.error(error_msg)
-                    raise RuntimeError(error_msg)
+            if not result.success:
+                error_msg = f"Quantum ESPRESSO failed with return code {result.returncode}"
+                if result.stderr:
+                    error_msg += f"\nStderr: {result.stderr}"
+                self.logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
             self.logger.info("Quantum ESPRESSO execution completed")
 
