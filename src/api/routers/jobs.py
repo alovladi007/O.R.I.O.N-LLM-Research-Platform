@@ -28,8 +28,10 @@ from ..models import (
     JobStatus,
     IllegalJobTransitionError,
 )
+from ..models.simulation import JobKind
 from ..schemas.simulation import (
     SimulationJobCreate,
+    SimulationJobDispatch,
     SimulationJobUpdate,
     SimulationJobResponse,
     SimulationResultResponse
@@ -754,6 +756,209 @@ async def get_job_status_summary(
             summary[status] = 0
 
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Dispatch path — Session 2.2
+# ---------------------------------------------------------------------------
+
+
+# Task name → Celery task (lazy import; avoids pulling src.worker at module
+# load). The mock_static entry is the one Session 2.2 ships; Phase 3+ add
+# more.
+_DISPATCH_TASKS: dict[str, str] = {
+    "mock_static": "orion.mock.static",
+}
+
+# Built-in workflow templates, materialized lazily so the mock dispatch
+# path works on a fresh DB without a separate seed step.
+_BUILTIN_TEMPLATES: dict[str, dict] = {
+    "mock_static": {
+        "name": "mock_static_default",
+        "display_name": "Mock static (builtin)",
+        "description": "Auto-created template for the mock_static dispatch path.",
+        "engine": "mock",
+        "category": "static",
+        "default_parameters": {},
+        "default_resources": {"cores": 1, "memory_gb": 1, "walltime_minutes": 5},
+        "is_active": True,
+        "is_public": True,
+    },
+}
+
+
+async def _get_or_create_builtin_template(db: AsyncSession, kind: str) -> WorkflowTemplate:
+    """Fetch the built-in template for *kind*, creating it on first use.
+
+    The template is keyed by ``name`` (unique) so concurrent submitters
+    race gracefully — SQL's unique constraint collapses the duplicates.
+    """
+    spec = _BUILTIN_TEMPLATES.get(kind)
+    if spec is None:
+        raise ValidationError(
+            f"No built-in template for kind={kind!r}",
+            details={"kind": kind, "known_kinds": sorted(_BUILTIN_TEMPLATES)},
+        )
+    existing = await db.execute(
+        select(WorkflowTemplate).where(WorkflowTemplate.name == spec["name"])
+    )
+    tpl = existing.scalar_one_or_none()
+    if tpl is not None:
+        return tpl
+
+    tpl = WorkflowTemplate(**spec)
+    db.add(tpl)
+    try:
+        await db.flush()
+    except Exception:  # noqa: BLE001 — someone beat us; re-select.
+        await db.rollback()
+        existing = await db.execute(
+            select(WorkflowTemplate).where(WorkflowTemplate.name == spec["name"])
+        )
+        tpl = existing.scalar_one()
+    return tpl
+
+
+@router.post(
+    "/dispatch",
+    response_model=SimulationJobResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Dispatch a job by kind + structure (Session 2.2)",
+    description=(
+        "Short-form submission path. Body is ``{kind, structure_id}`` — "
+        "the router looks up (or creates) a built-in workflow template "
+        "for the kind, creates the SimulationJob in QUEUED status, and "
+        "enqueues the matching Celery task. Returns the job row."
+    ),
+)
+async def dispatch_simulation_job(
+    body: SimulationJobDispatch,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> SimulationJobResponse:
+    if not current_user.can_run_simulations():
+        raise AuthorizationError("You don't have permission to run simulations")
+
+    # Validate kind against known Celery tasks.
+    if body.kind not in _DISPATCH_TASKS:
+        raise ValidationError(
+            f"Unknown job kind {body.kind!r}",
+            details={"kind": body.kind, "known": sorted(_DISPATCH_TASKS)},
+        )
+
+    # Structure must exist.
+    structure = await db.get(Structure, body.structure_id)
+    if structure is None:
+        raise NotFoundError("Structure", body.structure_id)
+
+    tpl = await _get_or_create_builtin_template(db, body.kind)
+
+    new_job = SimulationJob(
+        owner_id=current_user.id,
+        structure_id=body.structure_id,
+        workflow_template_id=tpl.id,
+        name=body.name or f"{body.kind} · {structure.name or structure.id}",
+        status=JobStatus.QUEUED,
+        priority=body.priority,
+        engine=tpl.engine,
+        kind=body.kind,
+        parameters={**(tpl.default_parameters or {}), **(body.parameters or {})},
+        resources=tpl.default_resources,
+        extra_metadata={},
+        submitted_at=datetime.utcnow(),
+    )
+    db.add(new_job)
+    if hasattr(tpl, "usage_count") and tpl.usage_count is not None:
+        tpl.usage_count = tpl.usage_count + 1
+    await db.commit()
+    await db.refresh(new_job)
+
+    # Enqueue. Use send_task by name so the API doesn't import src.worker.
+    try:
+        from src.worker.celery_app import celery_app
+
+        async_result = celery_app.send_task(
+            _DISPATCH_TASKS[body.kind],
+            args=[str(new_job.id)],
+        )
+        new_job.celery_task_id = async_result.id
+        await db.commit()
+        await db.refresh(new_job)
+    except Exception as exc:  # noqa: BLE001 — flip back to PENDING so the
+        # dispatch failure is visible. The reaper won't pick this up
+        # (wrong status), but the user gets a 500.
+        logger.exception("dispatch enqueue failed: %s", exc)
+        new_job.status = JobStatus.FAILED
+        new_job.error_message = f"enqueue_failed: {exc}"
+        await db.commit()
+        raise
+
+    return SimulationJobResponse.model_validate(new_job)
+
+
+# ---------------------------------------------------------------------------
+# Artifacts endpoint — Session 2.2
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{job_id}/artifacts",
+    summary="List artifacts for a job (Session 2.2)",
+    description=(
+        "Returns the artifact bundle stored on the job's ``extra_metadata`` "
+        "plus a presigned GET URL when MinIO is reachable. Jobs that haven't "
+        "produced artifacts yet return ``{items: []}``."
+    ),
+)
+async def list_job_artifacts(
+    job_id: uuid.UUID,
+    expires_seconds: int = Query(3600, ge=60, le=24 * 3600),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> dict:
+    job = await db.get(SimulationJob, job_id)
+    if job is None:
+        raise NotFoundError("SimulationJob", job_id)
+
+    extra = job.extra_metadata or {}
+    artifact = extra.get("artifact") if isinstance(extra, dict) else None
+    if not artifact:
+        return {"job_id": str(job.id), "items": []}
+
+    presigned_url: Optional[str] = None
+    error: Optional[str] = None
+    try:
+        from datetime import timedelta as _td
+
+        from backend.common.jobs import build_minio_client, presign_artifact
+
+        client = build_minio_client()
+        presigned_url = presign_artifact(
+            client,
+            bucket=artifact["bucket"],
+            key=artifact["key"],
+            expires=_td(seconds=expires_seconds),
+        )
+    except Exception as exc:  # noqa: BLE001 — MinIO unreachable ≠ error for
+        # the metadata view; surface it so the caller can retry later.
+        logger.warning("presign failed for %s: %s", job.id, exc)
+        error = f"{type(exc).__name__}: {exc}"
+
+    return {
+        "job_id": str(job.id),
+        "items": [
+            {
+                "kind": "tarball",
+                "bucket": artifact.get("bucket"),
+                "key": artifact.get("key"),
+                "size_bytes": artifact.get("size_bytes"),
+                "uploaded": artifact.get("uploaded"),
+                "presigned_url": presigned_url,
+                "presigned_expires_seconds": expires_seconds if presigned_url else None,
+                "error": error,
+            }
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------

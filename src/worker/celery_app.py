@@ -94,6 +94,9 @@ celery_app.conf.update(
         "orion.md.*": {"queue": "md", "routing_key": "task.md"},
         "orion.ml.*": {"queue": "ml", "routing_key": "task.ml"},
         "orion.io.*": {"queue": "io", "routing_key": "task.io"},
+        # Mock tasks go to `default` — they're cheap and don't belong on
+        # the DFT/MD queues where slots are expensive.
+        "orion.mock.*": {"queue": "default", "routing_key": "task.default"},
         # Back-compat explicit routes.
         "src.worker.tasks.run_simulation_job": {
             "queue": "simulations",

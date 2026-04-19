@@ -933,6 +933,187 @@ def _reap_stalled_sync(stall_seconds: int) -> Dict[str, Any]:
     return {"reaped": reaped, "errors": errors}
 
 
+# ---------------------------------------------------------------------------
+# Mock static — Session 2.2
+# ---------------------------------------------------------------------------
+
+
+def _sync_session_for_worker():
+    """Return ``(engine, Session)`` bound to the configured Postgres URL.
+
+    Celery tasks run in threads where ``asyncio.run`` is expensive and
+    awkward. The Session 2.2 mock task uses a sync engine so the hot
+    path is pure blocking code that pairs cleanly with ``JobLifecycle``.
+    Caller is responsible for disposing the engine.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from src.api.config import settings
+
+    sync_url = settings.database_url.replace("+asyncpg", "")
+    engine = create_engine(sync_url, pool_pre_ping=True, future=True)
+    Session = sessionmaker(engine, expire_on_commit=False, future=True)
+    return engine, Session
+
+
+def _load_structure_atoms(session, structure_id: str):
+    """Return ``(atoms, formula)`` for *structure_id* as a tuple.
+
+    Accepts either the ``atoms`` JSON column or a fallback synthetic
+    single-atom structure when the row has neither a parsed atoms list
+    nor a ``num_atoms`` hint. Raises if the structure row is missing —
+    the Celery task catches and marks FAILED.
+    """
+    from src.api.models import Structure
+
+    structure = session.get(Structure, structure_id)
+    if structure is None:
+        raise ValueError(f"Structure {structure_id!r} not found")
+
+    atoms = structure.atoms or []
+    if not atoms:
+        # Synthesize a plausible atom list so the mock still runs on
+        # structures uploaded pre-parse. Uses the formula's first char.
+        formula = structure.formula or "H"
+        first = "".join([c for c in formula if c.isalpha()])[:1] or "H"
+        atoms = [
+            {"species": first, "position": [0.0, 0.0, 0.0]}
+        ]
+        for i in range(1, max(1, structure.num_atoms or 1)):
+            atoms.append({"species": first, "position": [i * 1.5, 0.0, 0.0]})
+    return atoms, (structure.formula or "Unknown")
+
+
+@celery_app.task(
+    name="orion.mock.static",
+    bind=True,
+    autoretry_for=(),   # no retries for the mock — errors are logic bugs
+    acks_late=True,
+)
+def run_mock_static_job(self, job_id: str) -> Dict[str, Any]:
+    """Run the mock_static engine end-to-end for *job_id*.
+
+    Wiring in one place:
+
+    1. Open a sync session against Postgres.
+    2. Use :class:`JobLifecycle` to advance state and emit events.
+    3. Load the target :class:`Structure`, run
+       :func:`backend.common.jobs.run_mock_static`, and populate
+       ``lc.outputs`` + ``lc.bundle``.
+    4. On exit, :class:`JobLifecycle` persists outputs and bundles the
+       run dir into MinIO (best-effort).
+    """
+    from backend.common.jobs import (
+        DEFAULT_ARTIFACTS_BUCKET,
+        build_minio_client,
+        ensure_bucket,
+        run_mock_static,
+        write_trajectory_xyz,
+    )
+    from backend.common.workers import (
+        ArtifactBundle,
+        JobLifecycle,
+        build_run_dir,
+        tar_and_upload_run_dir,
+    )
+    from backend.common.workers.events import NullEventEmitter, RedisPubSubEmitter
+
+    engine, Session = _sync_session_for_worker()
+    minio_client = None
+    try:
+        # EventEmitter: prefer Redis if reachable; falls back to Null on
+        # any connection failure (the worker host is the one that
+        # decides, not the caller).
+        try:
+            minio_client = build_minio_client()
+            ensure_bucket(minio_client, DEFAULT_ARTIFACTS_BUCKET)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("mock_static: MinIO setup failed: %s", exc)
+            minio_client = None
+
+        emitter = RedisPubSubEmitter()
+
+        with Session() as session:
+            with JobLifecycle(
+                job_id, session=session, emitter=emitter, worker_id=self.request.id,
+            ) as lc:
+                # Get structure id off the loaded job row.
+                assert lc.job is not None
+                structure_id = lc.job.structure_id  # type: ignore[attr-defined]
+
+                atoms, formula = _load_structure_atoms(session, structure_id)
+                result = run_mock_static(
+                    structure_id=str(structure_id),
+                    atoms=atoms,
+                    formula=formula,
+                )
+
+                # Build a run dir, drop the three expected files in.
+                run_dir = build_run_dir(str(job_id))
+                energies_json = {
+                    "schema_version": result.schema_version,
+                    "energy_ev": result.energy_ev,
+                    "energy_per_atom_ev": result.energy_per_atom_ev,
+                    "converged": result.converged,
+                }
+                (run_dir / "energies.json").write_text(
+                    json.dumps(energies_json, indent=2, sort_keys=True)
+                )
+                forces_json = [f.model_dump() for f in result.forces]
+                (run_dir / "forces.json").write_text(
+                    json.dumps(forces_json, indent=2)
+                )
+                species_list = [f.species for f in result.forces]
+                (run_dir / "trajectory.xyz").write_text(
+                    write_trajectory_xyz(result.trajectory, species_list)
+                )
+
+                # Tarball + MinIO upload. Non-fatal on failure.
+                bundle = ArtifactBundle(
+                    run_dir=run_dir,
+                    job_id=str(job_id),
+                    manifest={
+                        "engine": "mock",
+                        "kind": "mock_static",
+                        "schema_version": result.schema_version,
+                        "n_atoms": result.n_atoms,
+                        "formula": result.formula,
+                    },
+                )
+                upload = tar_and_upload_run_dir(
+                    bundle, minio_client=minio_client, bucket=DEFAULT_ARTIFACTS_BUCKET,
+                )
+
+                # Stash artifact coords on the job row for the GET
+                # /jobs/{id}/artifacts endpoint to read.
+                extra = dict(getattr(lc.job, "extra_metadata", None) or {})
+                extra["artifact"] = {
+                    "bucket": upload["bucket"],
+                    "key": upload["key"],
+                    "tarball": upload["tarball"],
+                    "size_bytes": upload["size_bytes"],
+                    "uploaded": upload["uploaded"],
+                }
+                lc.job.extra_metadata = extra  # type: ignore[attr-defined]
+
+                # Populate outputs — JobLifecycle persists these on exit.
+                lc.outputs = result.model_dump()
+
+        return {
+            "job_id": job_id,
+            "status": "success",
+            "energy_ev": result.energy_ev,
+            "n_atoms": result.n_atoms,
+            "artifact_key": upload["key"],
+        }
+    finally:
+        try:
+            engine.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @celery_app.task(name="orion.io.reap_stalled_jobs", bind=True, ignore_result=False)
 def reap_stalled_jobs(self, stall_seconds: int = 120) -> Dict[str, Any]:
     """

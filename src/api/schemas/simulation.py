@@ -29,6 +29,22 @@ class SimulationJobCreate(BaseModel):
         }
 
 
+class SimulationJobDispatch(BaseModel):
+    """Minimal body for POST /api/v1/jobs/dispatch (Session 2.2).
+
+    Accepts the roadmap spec ``{"kind": "mock_static", "structure_id": "..."}``
+    plus optional parameters. The router looks up a built-in workflow
+    template matching *kind* (creating one on demand if missing) so the
+    dispatch path doesn't require the caller to know about templates.
+    """
+
+    kind: str = Field(..., description="JobKind value (e.g. 'mock_static').")
+    structure_id: uuid.UUID
+    name: Optional[str] = Field(None, max_length=255)
+    priority: int = Field(default=5, ge=0, le=20)
+    parameters: dict = Field(default_factory=dict)
+
+
 class SimulationJobUpdate(BaseModel):
     """Schema for updating a simulation job."""
     name: Optional[str] = Field(None, max_length=255)
