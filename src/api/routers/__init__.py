@@ -5,6 +5,7 @@ from .auth import router as auth_router
 from .materials import router as materials_router
 from .structures import router as structures_router
 from .workflows import router as workflows_router
+from .workflow_runs import router as workflow_runs_router
 from .jobs import router as jobs_router
 from .ml import router as ml_router
 from .design import router as design_router
@@ -22,6 +23,7 @@ __all__ = [
     "materials_router",
     "structures_router",
     "workflows_router",
+    "workflow_runs_router",
     "jobs_router",
     "ml_router",
     "design_router",

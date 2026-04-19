@@ -1114,6 +1114,92 @@ def run_mock_static_job(self, job_id: str) -> Dict[str, Any]:
             pass
 
 
+# ---------------------------------------------------------------------------
+# Workflow tick — Session 2.4
+# ---------------------------------------------------------------------------
+
+
+def _tick_workflow_runs_sync() -> Dict[str, Any]:
+    """Advance every non-terminal WorkflowRun by one step.
+
+    Runs under a sync engine so the Celery worker thread model is
+    straightforward. Returns a dict suitable for logging / metrics.
+    """
+    from sqlalchemy import select
+
+    from backend.common.workflows import tick
+    from backend.common.workflows.celery_dispatcher import CeleryDispatcher
+    from src.api.models import (
+        SimulationJob,
+        WorkflowRun,
+        WorkflowRunStatus,
+    )
+
+    engine, Session = _sync_session_for_worker()
+    advanced_total = 0
+    completed_runs: list[str] = []
+    per_run: list[Dict[str, Any]] = []
+    try:
+        with Session() as session:
+            stmt = select(WorkflowRun).where(
+                WorkflowRun.status.in_(
+                    [
+                        WorkflowRunStatus.PENDING.value,
+                        WorkflowRunStatus.RUNNING.value,
+                    ]
+                )
+            )
+            for run in session.execute(stmt).scalars().all():
+                dispatcher = CeleryDispatcher(session)
+                result = tick(
+                    run,
+                    job_lookup=lambda jid: session.get(SimulationJob, jid),
+                    dispatcher=dispatcher,
+                )
+                advanced_total += len(result.advanced)
+                per_run.append({"run_id": str(run.id), **result.as_dict()})
+                if result.aggregate_status in ("COMPLETED", "FAILED", "CANCELLED"):
+                    completed_runs.append(str(run.id))
+                    # Write the manifest on terminal.
+                    from backend.common.workflows import build_workflow_manifest
+
+                    run.manifest = build_workflow_manifest(
+                        workflow_run_id=str(run.id),
+                        name=run.name,
+                        step_records=[
+                            {
+                                "step_id": s.step_id,
+                                "status": s.status,
+                                "job_id": str(s.simulation_job_id) if s.simulation_job_id else None,
+                                "outputs": s.outputs,
+                                "artifact": (
+                                    (session.get(SimulationJob, s.simulation_job_id).extra_metadata or {}).get("artifact")
+                                    if s.simulation_job_id else None
+                                ),
+                            }
+                            for s in run.steps
+                        ],
+                    )
+            session.commit()
+    finally:
+        engine.dispose()
+    return {
+        "advanced": advanced_total,
+        "completed_runs": completed_runs,
+        "per_run": per_run,
+    }
+
+
+@celery_app.task(name="orion.workflows.tick", bind=True, ignore_result=False)
+def tick_workflow_runs(self) -> Dict[str, Any]:
+    """Celery beat entry point: advance every workflow run by one step."""
+    try:
+        return _tick_workflow_runs_sync()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("workflow tick failed: %s", exc)
+        return {"advanced": 0, "completed_runs": [], "per_run": [], "error": str(exc)}
+
+
 @celery_app.task(name="orion.io.reap_stalled_jobs", bind=True, ignore_result=False)
 def reap_stalled_jobs(self, stall_seconds: int = 120) -> Dict[str, Any]:
     """

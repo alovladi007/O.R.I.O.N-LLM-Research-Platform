@@ -43,6 +43,7 @@ from .routers import (
     materials_router,
     structures_router,
     workflows_router,
+    workflow_runs_router,
     jobs_router,
     ml_router,
     design_router,
@@ -232,6 +233,11 @@ def create_app() -> FastAPI:
         jobs_router,
         prefix=f"{settings.api_prefix}/jobs",
         tags=["jobs"]
+    )
+    app.include_router(
+        workflow_runs_router,
+        prefix=f"{settings.api_prefix}/workflow-runs",
+        tags=["workflow-runs"]
     )
     app.include_router(
         ml_router,

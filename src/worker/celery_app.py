@@ -43,6 +43,11 @@ def _build_beat_schedule() -> dict:
             "task": "orion.io.reap_stalled_jobs",
             "schedule": 60.0,
         },
+        # Workflow DAG tick: advance every non-terminal WorkflowRun.
+        "orion.workflows.tick": {
+            "task": "orion.workflows.tick",
+            "schedule": 5.0,
+        },
     }
     if os.getenv("ORION_ENABLE_ORCHESTRATOR_BEAT", "").lower() == "true":
         schedule["orion.orchestrator.tick"] = {
@@ -97,6 +102,8 @@ celery_app.conf.update(
         # Mock tasks go to `default` — they're cheap and don't belong on
         # the DFT/MD queues where slots are expensive.
         "orion.mock.*": {"queue": "default", "routing_key": "task.default"},
+        # Workflow ticks are DB reads + Celery send_task — always default.
+        "orion.workflows.*": {"queue": "default", "routing_key": "task.default"},
         # Back-compat explicit routes.
         "src.worker.tasks.run_simulation_job": {
             "queue": "simulations",

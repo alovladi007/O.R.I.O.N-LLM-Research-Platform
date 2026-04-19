@@ -56,6 +56,12 @@ from .orchestrator import (
     AgentCommand,
     OrchestratorMode,
 )
+from .workflow_run import (
+    WorkflowRun,
+    WorkflowRunStep,
+    WorkflowRunStatus,
+    WorkflowStepStatus,
+)
 
 __all__ = [
     "User",
@@ -97,4 +103,8 @@ __all__ = [
     "OrchestratorRun",
     "AgentCommand",
     "OrchestratorMode",
+    "WorkflowRun",
+    "WorkflowRunStep",
+    "WorkflowRunStatus",
+    "WorkflowStepStatus",
 ]
