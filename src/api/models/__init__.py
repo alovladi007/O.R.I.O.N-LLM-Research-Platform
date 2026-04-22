@@ -62,6 +62,7 @@ from .workflow_run import (
     WorkflowRunStatus,
     WorkflowStepStatus,
 )
+from .reference_energy import ReferenceEnergy
 
 __all__ = [
     "User",
@@ -107,4 +108,5 @@ __all__ = [
     "WorkflowRunStep",
     "WorkflowRunStatus",
     "WorkflowStepStatus",
+    "ReferenceEnergy",
 ]

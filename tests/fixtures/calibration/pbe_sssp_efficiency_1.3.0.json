@@ -1,0 +1,134 @@
+[
+  {
+    "element": "Si",
+    "functional": "PBE",
+    "pseudo_family": "SSSP_efficiency_1.3.0",
+    "energy_per_atom_ev": -155.3746707954956,
+    "n_atoms_in_reference_cell": 2,
+    "reference_prototype": "diamond_cubic",
+    "relaxed_a_ang": 5.469210472,
+    "extra_metadata": {
+      "ecutwfc_ry": 43.74353160781668,
+      "ecutrho_ry": 349.9482528625334,
+      "kpoints": [
+        9,
+        9,
+        9
+      ],
+      "pseudo_dir": "/Users/vladimirantoine/orion/pseudos/SSSP_1.3.0_PBE_efficiency",
+      "n_scf_iterations": 7,
+      "wall_time_seconds": 19.32,
+      "seed_a_ang": 5.431
+    }
+  },
+  {
+    "element": "Cu",
+    "functional": "PBE",
+    "pseudo_family": "SSSP_efficiency_1.3.0",
+    "energy_per_atom_ev": -2899.2956785903216,
+    "n_atoms_in_reference_cell": 1,
+    "reference_prototype": "fcc",
+    "relaxed_a_ang": 3.6129577000000004,
+    "extra_metadata": {
+      "ecutwfc_ry": 44.66409260079,
+      "ecutrho_ry": 357.31274080632,
+      "kpoints": [
+        13,
+        13,
+        13
+      ],
+      "pseudo_dir": "/Users/vladimirantoine/orion/pseudos/SSSP_1.3.0_PBE_efficiency",
+      "n_scf_iterations": 7,
+      "wall_time_seconds": 16.22,
+      "seed_a_ang": 3.615
+    }
+  },
+  {
+    "element": "Al",
+    "functional": "PBE",
+    "pseudo_family": "SSSP_efficiency_1.3.0",
+    "energy_per_atom_ev": -537.4722009997987,
+    "n_atoms_in_reference_cell": 1,
+    "reference_prototype": "fcc",
+    "relaxed_a_ang": 4.041227354,
+    "extra_metadata": {
+      "ecutwfc_ry": 29.49430082155506,
+      "ecutrho_ry": 235.9544065724405,
+      "kpoints": [
+        11,
+        11,
+        11
+      ],
+      "pseudo_dir": "/Users/vladimirantoine/orion/pseudos/SSSP_1.3.0_PBE_efficiency",
+      "n_scf_iterations": 5,
+      "wall_time_seconds": 6.54,
+      "seed_a_ang": 4.046
+    }
+  },
+  {
+    "element": "Na",
+    "functional": "PBE",
+    "pseudo_family": "SSSP_efficiency_1.3.0",
+    "energy_per_atom_ev": -1297.2447217429615,
+    "n_atoms_in_reference_cell": 1,
+    "reference_prototype": "bcc",
+    "relaxed_a_ang": 4.194107686,
+    "extra_metadata": {
+      "ecutwfc_ry": 40.0,
+      "ecutrho_ry": 320.0,
+      "kpoints": [
+        9,
+        9,
+        9
+      ],
+      "pseudo_dir": "/Users/vladimirantoine/orion/pseudos/SSSP_1.3.0_PBE_efficiency",
+      "n_scf_iterations": 6,
+      "wall_time_seconds": 18.85,
+      "seed_a_ang": 4.29
+    }
+  },
+  {
+    "element": "Sr",
+    "functional": "PBE",
+    "pseudo_family": "SSSP_efficiency_1.3.0",
+    "energy_per_atom_ev": -954.3837974033296,
+    "n_atoms_in_reference_cell": 1,
+    "reference_prototype": "fcc",
+    "relaxed_a_ang": 6.02634939,
+    "extra_metadata": {
+      "ecutwfc_ry": 40.0,
+      "ecutrho_ry": 320.0,
+      "kpoints": [
+        8,
+        8,
+        8
+      ],
+      "pseudo_dir": "/Users/vladimirantoine/orion/pseudos/SSSP_1.3.0_PBE_efficiency",
+      "n_scf_iterations": 7,
+      "wall_time_seconds": 29.47,
+      "seed_a_ang": 6.084
+    }
+  },
+  {
+    "element": "Ti",
+    "functional": "PBE",
+    "pseudo_family": "SSSP_efficiency_1.3.0",
+    "energy_per_atom_ev": -1622.4892393253313,
+    "n_atoms_in_reference_cell": 2,
+    "reference_prototype": "hcp",
+    "relaxed_a_ang": 2.939891038,
+    "extra_metadata": {
+      "ecutwfc_ry": 40.0,
+      "ecutrho_ry": 320.0,
+      "kpoints": [
+        10,
+        10,
+        6
+      ],
+      "pseudo_dir": "/Users/vladimirantoine/orion/pseudos/SSSP_1.3.0_PBE_efficiency",
+      "n_scf_iterations": 10,
+      "wall_time_seconds": 48.1,
+      "seed_a_ang": 2.951
+    }
+  }
+]
