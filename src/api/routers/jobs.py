@@ -768,6 +768,7 @@ async def get_job_status_summary(
 # more.
 _DISPATCH_TASKS: dict[str, str] = {
     "mock_static": "orion.mock.static",
+    "dft_static": "orion.dft.static",   # Session 3.2
 }
 
 # Built-in workflow templates, materialized lazily so the mock dispatch
@@ -781,6 +782,22 @@ _BUILTIN_TEMPLATES: dict[str, dict] = {
         "category": "static",
         "default_parameters": {},
         "default_resources": {"cores": 1, "memory_gb": 1, "walltime_minutes": 5},
+        "is_active": True,
+        "is_public": True,
+    },
+    "dft_static": {
+        "name": "dft_static_default",
+        "display_name": "DFT static SCF (Quantum Espresso, builtin)",
+        "description": "Auto-created template for single-point QE SCF runs.",
+        "engine": "qe",
+        "category": "static",
+        "default_parameters": {
+            "calculation": "scf",
+            "occupations": "smearing",
+            "smearing": "gauss",
+            "degauss": 0.01,
+        },
+        "default_resources": {"cores": 4, "memory_gb": 8, "walltime_minutes": 60},
         "is_active": True,
         "is_public": True,
     },

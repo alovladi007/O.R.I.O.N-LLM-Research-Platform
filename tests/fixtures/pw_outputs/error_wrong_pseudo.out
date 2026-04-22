@@ -1,0 +1,13 @@
+
+     Program PWSCF v.7.2 starts on 21Apr2026 at 12:00:00
+
+     bravais-lattice index     =            0
+     number of atoms/cell      =            2
+     number of atomic types    =            1
+
+     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+     Error in routine readpp (1):
+     mismatch between pseudopotential and structure
+     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+     stopping ...

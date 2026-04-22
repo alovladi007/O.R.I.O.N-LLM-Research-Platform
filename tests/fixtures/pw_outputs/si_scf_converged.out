@@ -1,0 +1,60 @@
+
+     Program PWSCF v.7.2 starts on 21Apr2026 at 10:00:00
+
+     Parallel version (MPI), running on     1 processors
+
+     bravais-lattice index     =            0
+     lattice parameter (alat)  =      10.2000  a.u.
+     unit-cell volume          =    1061.2080 (a.u.)^3
+     number of atoms/cell      =            2
+     number of atomic types    =            1
+     number of electrons       =         8.00
+     number of Kohn-Sham states=            8
+     kinetic-energy cutoff     =      44.0000  Ry
+     charge density cutoff     =     352.0000  Ry
+
+     scf convergence threshold =   1.0E-08
+     mixing beta               =       0.4000
+     number of iterations used =            8  plain     mixing
+
+     number of k points=     10
+
+     Self-consistent Calculation
+
+     iteration #  1     ecut=    44.00 Ry     beta= 0.40
+     Davidson diagonalization with overlap
+     ethr =  1.00E-02,  avg # of iterations =  2.0
+
+     total energy              =     -15.80000000 Ry
+     estimated scf accuracy    <       0.05000000 Ry
+
+     iteration #  2     ecut=    44.00 Ry     beta= 0.40
+     total energy              =     -15.82500000 Ry
+     estimated scf accuracy    <       0.00500000 Ry
+
+     iteration #  3     ecut=    44.00 Ry     beta= 0.40
+     total energy              =     -15.83000000 Ry
+     estimated scf accuracy    <       0.00008000 Ry
+
+     convergence has been achieved in   3 iterations
+
+     Forces acting on atoms (cartesian axes, Ry/au):
+
+     atom    1 type  1   force =     0.00100000   -0.00200000    0.00300000
+     atom    2 type  1   force =    -0.00100000    0.00200000   -0.00300000
+
+     Total force =     0.005292     Total SCF correction =     0.000001
+
+     The non-local contrib.  to forces
+
+     entering subroutine stress ...
+
+     total   stress  (Ry/bohr**3)                   (kbar)     P=    3.21
+    0.00001234  -0.00000056   0.00000000           1.81     -0.08      0.00
+   -0.00000056   0.00001234   0.00000000          -0.08      1.81      0.00
+    0.00000000   0.00000000   0.00006789           0.00      0.00      9.98
+
+
+!    total energy              =     -15.83000000 Ry
+
+     PWSCF        :     0.30s CPU      0.40s WALL

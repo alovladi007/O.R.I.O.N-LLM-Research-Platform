@@ -985,6 +985,47 @@ def _load_structure_atoms(session, structure_id: str):
     return atoms, (structure.formula or "Unknown")
 
 
+def _load_structure_for_qe(session, structure_id: str) -> dict:
+    """Return the QE-shaped structure dict for *structure_id*.
+
+    Shape: ``{lattice: 3x3 Å, species: [str], frac_coords: [[x,y,z]]}``
+    matching the contract of
+    :func:`backend.common.engines.qe_input.generate_pw_input`.
+    """
+    from src.api.models import Structure
+
+    structure = session.get(Structure, structure_id)
+    if structure is None:
+        raise ValueError(f"Structure {structure_id!r} not found")
+
+    atoms_json = structure.atoms or []
+    if not atoms_json:
+        raise ValueError(
+            f"Structure {structure_id!r} has no parsed atoms — re-upload via /structures."
+        )
+    # atoms_json is a list of dicts with "species" + "position".
+    species = [a.get("species") or a.get("symbol") for a in atoms_json]
+    frac_coords = [a.get("position") or a.get("coords") or [0, 0, 0] for a in atoms_json]
+
+    # Lattice: Structure model uses `lattice_vectors` (list[list[float]]) or
+    # the `lattice` JSON dict. Prefer the former (Session 1.1 parsers).
+    lat = getattr(structure, "lattice_vectors", None)
+    if not lat:
+        lat_field = structure.lattice or {}
+        # Some parsers stash the matrix under "matrix".
+        lat = lat_field.get("matrix") if isinstance(lat_field, dict) else None
+    if not lat:
+        raise ValueError(
+            f"Structure {structure_id!r} has no lattice vectors — "
+            "QE needs a 3x3 matrix."
+        )
+    return {
+        "lattice": lat,
+        "species": species,
+        "frac_coords": frac_coords,
+    }
+
+
 @celery_app.task(
     name="orion.mock.static",
     bind=True,
@@ -1105,6 +1146,153 @@ def run_mock_static_job(self, job_id: str) -> Dict[str, Any]:
             "status": "success",
             "energy_ev": result.energy_ev,
             "n_atoms": result.n_atoms,
+            "artifact_key": upload["key"],
+        }
+    finally:
+        try:
+            engine.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# ---------------------------------------------------------------------------
+# DFT static via Quantum Espresso — Session 3.2
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    name="orion.dft.static",
+    bind=True,
+    acks_late=True,
+)
+def run_dft_static_job(self, job_id: str) -> Dict[str, Any]:
+    """Run a single pw.x SCF for *job_id* and persist outputs + artifact.
+
+    Wiring:
+    1. Open sync session.
+    2. Enter :class:`JobLifecycle`.
+    3. Load Structure → build ``QEInputParams`` from
+       ``job.parameters`` → generate_pw_input via
+       :mod:`backend.common.engines.qe_input` (Session 3.1).
+    4. Invoke :func:`run_pw` via :mod:`backend.common.engines.qe_run`
+       (Session 3.2). UPFs staged into ``run_dir/pseudos``.
+    5. Persist parsed output dict onto ``lc.outputs``; tar run_dir to
+       MinIO for download via ``GET /jobs/{id}/artifacts``.
+
+    Binary path: reads ``QE_EXECUTABLE`` env (default ``pw.x``).
+    Pseudo library path: ``QE_PSEUDO_DIR`` env (the runner's default).
+    """
+    import os
+    from pathlib import Path
+
+    from backend.common.engines.qe_input import (
+        PseudopotentialRegistry,
+        QEInputParams,
+        generate_pw_input,
+    )
+    from backend.common.engines.qe_run import run_pw
+    from backend.common.jobs import (
+        DEFAULT_ARTIFACTS_BUCKET,
+        build_minio_client,
+        ensure_bucket,
+    )
+    from backend.common.workers import (
+        ArtifactBundle,
+        JobLifecycle,
+        build_run_dir,
+        tar_and_upload_run_dir,
+    )
+    from backend.common.workers.events import NullEventEmitter, RedisPubSubEmitter
+
+    engine, Session = _sync_session_for_worker()
+    minio_client = None
+    try:
+        try:
+            minio_client = build_minio_client()
+            ensure_bucket(minio_client, DEFAULT_ARTIFACTS_BUCKET)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("dft_static: MinIO setup failed: %s", exc)
+            minio_client = None
+
+        emitter = RedisPubSubEmitter()
+
+        with Session() as session:
+            with JobLifecycle(
+                job_id, session=session, emitter=emitter, worker_id=self.request.id,
+            ) as lc:
+                assert lc.job is not None
+                structure_id = lc.job.structure_id  # type: ignore[attr-defined]
+                parameters = lc.job.parameters or {}  # type: ignore[attr-defined]
+
+                # Load + build input
+                qe_struct = _load_structure_for_qe(session, structure_id)
+                pseudo_dir = os.getenv(
+                    "QE_PSEUDO_DIR",
+                    str(Path.home() / "orion" / "pseudos" / "SSSP_1.3.0_PBE_efficiency"),
+                )
+                registry = PseudopotentialRegistry(pseudo_dir)
+
+                qe_params_dict = {
+                    k: v for k, v in parameters.items()
+                    if k in QEInputParams.model_fields
+                }
+                params = QEInputParams(**qe_params_dict)
+                rendered = generate_pw_input(qe_struct, params, registry)
+
+                # Run pw.x
+                run_dir = build_run_dir(str(job_id))
+                pw_executable = os.getenv("QE_EXECUTABLE", "pw.x")
+                walltime = int(parameters.get("walltime_minutes", 60))
+                cpus = int(parameters.get("cpus", 1))
+                run_result = run_pw(
+                    rendered,
+                    run_dir,
+                    qe_executable=pw_executable,
+                    pseudo_src_dir=registry.pseudo_dir,
+                    cpus=cpus,
+                    walltime_minutes=walltime,
+                    species_hint=qe_struct["species"],
+                )
+
+                if not run_result.success:
+                    raise RuntimeError(
+                        f"pw.x stage={run_result.stage}: {run_result.error_message}"
+                    )
+
+                # Package artifact
+                bundle = ArtifactBundle(
+                    run_dir=run_dir,
+                    job_id=str(job_id),
+                    manifest={
+                        "engine": "qe",
+                        "kind": "dft_static",
+                        "ecutwfc_ry": rendered.ecutwfc_ry,
+                        "ecutrho_ry": rendered.ecutrho_ry,
+                        "kpoints": list(
+                            (rendered.kpoints.nk1, rendered.kpoints.nk2, rendered.kpoints.nk3)
+                        ),
+                    },
+                )
+                upload = tar_and_upload_run_dir(
+                    bundle, minio_client=minio_client, bucket=DEFAULT_ARTIFACTS_BUCKET,
+                )
+                extra = dict(getattr(lc.job, "extra_metadata", None) or {})
+                extra["artifact"] = {
+                    "bucket": upload["bucket"],
+                    "key": upload["key"],
+                    "tarball": upload["tarball"],
+                    "size_bytes": upload["size_bytes"],
+                    "uploaded": upload["uploaded"],
+                }
+                lc.job.extra_metadata = extra  # type: ignore[attr-defined]
+
+                # Outputs persisted to parameters._outputs on exit.
+                lc.outputs = run_result.output.as_dict()
+
+        return {
+            "job_id": job_id,
+            "status": "success",
+            "energy_ev": run_result.output.energy.total_ev if run_result.output.energy else None,
             "artifact_key": upload["key"],
         }
     finally:

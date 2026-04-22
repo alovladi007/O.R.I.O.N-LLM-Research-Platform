@@ -1,0 +1,24 @@
+
+     Program PWSCF v.7.2 starts on 21Apr2026 at 11:00:00
+
+     bravais-lattice index     =            0
+     number of atoms/cell      =            2
+     number of atomic types    =            1
+     number of electrons       =         8.00
+     kinetic-energy cutoff     =      44.0000  Ry
+
+     scf convergence threshold =   1.0E-08
+
+     Self-consistent Calculation
+
+     iteration #  1     ecut=    44.00 Ry     beta= 0.40
+     total energy              =     -15.80000000 Ry
+     estimated scf accuracy    <       0.05000000 Ry
+
+     iteration #200     ecut=    44.00 Ry     beta= 0.40
+     total energy              =     -15.82499999 Ry
+     estimated scf accuracy    <       0.00010000 Ry
+
+     convergence NOT achieved after 200 iterations: stopping
+
+     PWSCF        :     8.20s CPU      9.00s WALL
