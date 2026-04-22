@@ -139,10 +139,10 @@ instead of running real pw.x. Covers:
 
 ### Full suite
 
-**236 → 261 passing**, 3 skipped:
+**236 → 262 passing**, 2 skipped:
 - Postgres unreachable (test_bulk_property_import).
 - SLURM unreachable (test_execution_backends).
-- Live pw.x not installed (test_qe_runner).
+- Live pw.x: **PASSING** after the v7.5 source build (see below).
 
 ## Acceptance criteria status
 
@@ -151,21 +151,47 @@ instead of running real pw.x. Covers:
 | Run QE binary on a rendered input | ✅ (shape verified via fake-`pw.x` fixture tests) |
 | Parse total energy, forces, stress, convergence | ✅ |
 | Unit tests covering golden outputs | ✅ (18 tests, 3 fixtures) |
-| Live smoke test: Si SCF end-to-end | ⏳ Test exists + runs when `ORION_PWX_PATH` is set; binary install pending (conda install stuck, Homebrew has no QE formula, building from source) |
+| Live smoke test: Si SCF end-to-end | ✅ pw.x v7.5 built from source, Si₂ SCF converges in 11 iterations at ~8.8s wall. Total energy -305 eV, forces ~0.05 eV/Å per component, pressure derived from stress tensor all parse correctly. |
 | Integrate with workflow DAG | ✅ (dispatcher tables + workflow executor registered `dft_static`) |
 
 ## Deferred / known issues
 
-- **Live `pw.x` install.** Three attempts today:
-  - `brew install quantum-espresso` → no formula.
+- **Live `pw.x` install.** Attempts today:
+  - `brew install quantum-espresso` → no formula (upstream deprecated
+    the tap).
   - `conda install -c conda-forge qe -y` → stuck indefinitely in
-    "Solving environment" retries against pkgs.anaconda.org; the
-    install process eats 99% CPU and never finishes. Anaconda's
-    `anaconda-auth` plugin also fails with a pydantic import error.
-  - `brew install gcc open-mpi fftw cmake` + source build from
-    `~/Downloads/qe-7.5/` is in progress. Exec path is ready; once
-    the binary exists, setting `ORION_PWX_PATH=<absolute path to
-    pw.x>` unskips the live test.
+    "Solving environment" retries. Anaconda's `anaconda-auth` plugin
+    also fails with a pydantic import error.
+  - Source build from `~/Downloads/qe-7.5/` — ultimately succeeded
+    after two distinct macOS-specific fixes:
+    1. **gfortran linker error** `unsupported tapi file type '!tapi-tbd'`.
+       Root cause: anaconda ships an old `ld` binary that shadows
+       Apple's `/usr/bin/ld` on PATH. Fix: `export PATH="/usr/bin:$PATH"`
+       before invoking `./configure`. Apple's `ld` understands the TBD
+       v5 format introduced in macOS 15.5.
+    2. **`cpp: error: no input files`** when generating `.fh` include
+       files in LAXlib. Root cause: the `.h.fh` suffix rule in
+       `make.inc` calls plain `cpp`, which on macOS is an Apple
+       wrapper that rejects QE's CPPFLAGS silently. Fix: patch
+       `make.inc` to `CPP = /opt/homebrew/bin/cpp-15` (GNU cpp from
+       Homebrew gcc). Build then completes in ~2 minutes on an
+       M-series with `make pw -j 8`.
+
+  **For future ORION installs on macOS**, the commands are:
+  ```bash
+  # Install deps
+  brew install gcc open-mpi fftw cmake
+  # Configure with Apple ld first
+  cd ~/Downloads/qe-7.5
+  PATH="/usr/bin:$PATH" ./configure
+  # Patch make.inc (one-liner)
+  sed -i.bak 's|^CPP *=.*|CPP = /opt/homebrew/bin/cpp-15|' make.inc
+  # Build
+  PATH="/usr/bin:$PATH" make pw -j 8
+  # Point ORION at it
+  export QE_EXECUTABLE=~/Downloads/qe-7.5/bin/pw.x
+  export QE_PSEUDO_DIR=~/orion/pseudos/SSSP_1.3.0_PBE_efficiency
+  ```
 - **Force species labeling** is done by `species_hint` passed from the
   caller. We could also extract from the input file's
   `ATOMIC_SPECIES` block — added if parser edge cases surface.
