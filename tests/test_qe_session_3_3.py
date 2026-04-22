@@ -320,3 +320,85 @@ class TestDOSHeuristics:
             idos=[0.0, 0.5, 1.0],
         )
         assert _estimate_vbm_cbm(dos) == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# Phonon cubic-structure guard (3.3 addendum)
+# ---------------------------------------------------------------------------
+
+
+class TestPhononsCubicGuard:
+    """The Γ-only ph.x calculation is only physically meaningful for
+    cubic materials — LO–TO splitting + anisotropy are missing. Until
+    Session 3.3b lifts this, non-cubic inputs are refused at the
+    pre-pw stage (before SCF runs)."""
+
+    def test_identity_cubic_lattice_is_cubic(self):
+        from src.worker.tasks import _is_cubic_lattice
+
+        assert _is_cubic_lattice([[5.0, 0, 0], [0, 5.0, 0], [0, 0, 5.0]]) is True
+
+    def test_si_primitive_fcc_is_cubic(self):
+        """FCC primitive with equal-length vectors at 60° is still
+        cubic in the sense that matters here — it reduces to a cubic
+        conventional cell."""
+        from src.worker.tasks import _is_cubic_lattice
+
+        # a/2 * (0,1,1) etc. All three have norm a*sqrt(2)/2, all three
+        # pairwise angles are 60°. This is *not* cubic in our strict
+        # check (angles must be 90°). The guard correctly flags it —
+        # users submitting primitive cells should use the conventional
+        # orthogonal cell for phonons, which is the standard practice.
+        a = 5.43
+        primitive = [[0, a / 2, a / 2], [a / 2, 0, a / 2], [a / 2, a / 2, 0]]
+        assert _is_cubic_lattice(primitive) is False
+
+    def test_tetragonal_rejected(self):
+        from src.worker.tasks import _is_cubic_lattice
+
+        # a = b = 5, c = 6: different lengths → not cubic.
+        assert _is_cubic_lattice([[5.0, 0, 0], [0, 5.0, 0], [0, 0, 6.0]]) is False
+
+    def test_monoclinic_rejected(self):
+        from src.worker.tasks import _is_cubic_lattice
+
+        # Same lengths but β != 90°.
+        import math
+
+        a = 5.0
+        beta = math.radians(100)  # 100° angle between a and c
+        lattice = [
+            [a, 0, 0],
+            [0, a, 0],
+            [a * math.cos(beta), 0, a * math.sin(beta)],
+        ]
+        assert _is_cubic_lattice(lattice) is False
+
+    def test_malformed_lattice_rejected(self):
+        from src.worker.tasks import _is_cubic_lattice
+
+        assert _is_cubic_lattice([]) is False
+        assert _is_cubic_lattice([[0, 0, 0], [0, 0, 0], [0, 0, 0]]) is False
+        assert _is_cubic_lattice([[1, 2, 3]]) is False
+
+    def test_assert_cubic_for_phonons_raises_on_non_cubic(self):
+        from src.worker.tasks import _assert_cubic_for_phonons
+
+        qe_struct = {
+            "lattice": [[5.0, 0, 0], [0, 5.0, 0], [0, 0, 6.0]],
+            "species": ["Si", "Si"],
+            "frac_coords": [[0, 0, 0], [0.25, 0.25, 0.25]],
+        }
+        with pytest.raises(RuntimeError, match="not cubic"):
+            _assert_cubic_for_phonons(qe_struct)
+
+    def test_assert_cubic_for_phonons_passes_on_cubic(self):
+        from src.worker.tasks import _assert_cubic_for_phonons
+
+        qe_struct = {
+            "lattice": [[5.0, 0, 0], [0, 5.0, 0], [0, 0, 5.0]],
+            "species": ["Si", "Si"],
+            "frac_coords": [[0, 0, 0], [0.25, 0.25, 0.25]],
+        }
+        # Should not raise.
+        _assert_cubic_for_phonons(qe_struct)

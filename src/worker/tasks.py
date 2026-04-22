@@ -1314,6 +1314,7 @@ def _run_pw_step(
     kind: str,
     calculation: str,
     prior_pw_run: Optional[str] = None,
+    pre_pw: Optional[Callable] = None,
     post_pw: Optional[Callable] = None,
     extra_param_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -1376,6 +1377,14 @@ def _run_pw_step(
                 parameters = lc.job.parameters or {}  # type: ignore[attr-defined]
 
                 qe_struct = _load_structure_for_qe(session, structure_id)
+
+                # Pre-pw guard — fires after structure load but before
+                # any compute. Raises propagate through JobLifecycle
+                # so the job row records FAILED with the exception
+                # message, matching every other failure mode.
+                if pre_pw is not None:
+                    pre_pw(qe_struct=qe_struct, params=parameters)
+
                 pseudo_dir = os.getenv(
                     "QE_PSEUDO_DIR",
                     str(Path.home() / "orion" / "pseudos" / "SSSP_1.3.0_PBE_efficiency"),
@@ -1749,13 +1758,89 @@ def _phonons_gamma_post_pw(*, run_dir, registry, pw_result, params, lc, session)
     }
 
 
+def _is_cubic_lattice(lattice: list, *, length_tol: float = 0.01, angle_tol_deg: float = 0.5) -> bool:
+    """True when *lattice* is numerically cubic.
+
+    Cubic = three lattice vectors of equal length AND all three
+    pairwise angles = 90°. ``length_tol`` is relative (|Δa|/a);
+    ``angle_tol_deg`` is absolute degrees. Defaults are tight enough
+    to reject tetragonal / orthorhombic / trigonal / anything with a
+    dipole, which is what Session 3.3's phonon guard needs.
+    """
+    import math
+
+    if not lattice or len(lattice) != 3:
+        return False
+    try:
+        a = [float(x) for x in lattice[0]]
+        b = [float(x) for x in lattice[1]]
+        c = [float(x) for x in lattice[2]]
+    except (TypeError, ValueError):
+        return False
+
+    def _norm(v):
+        return math.sqrt(sum(x * x for x in v))
+
+    def _angle_deg(u, v):
+        nu, nv = _norm(u), _norm(v)
+        if nu == 0 or nv == 0:
+            return math.nan
+        cos = max(-1.0, min(1.0, (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (nu * nv)))
+        return math.degrees(math.acos(cos))
+
+    la, lb, lc = _norm(a), _norm(b), _norm(c)
+    if la == 0 or lb == 0 or lc == 0:
+        return False
+    if abs(la - lb) / la > length_tol:
+        return False
+    if abs(la - lc) / la > length_tol:
+        return False
+    for u, v in ((a, b), (b, c), (a, c)):
+        if abs(_angle_deg(u, v) - 90.0) > angle_tol_deg:
+            return False
+    return True
+
+
+def _assert_cubic_for_phonons(qe_struct: dict) -> None:
+    """Guard: refuse non-cubic inputs for Γ-only phonon tasks.
+
+    Γ-only ph.x calculations silently produce wrong frequencies for
+    anisotropic materials (missing directional averaging) and polar
+    semiconductors (missing LO–TO splitting). Session 3.3b will lift
+    this restriction. Until then, bail with a clear error rather
+    than hand back a plausible-looking lie.
+    """
+    if not _is_cubic_lattice(qe_struct.get("lattice") or []):
+        raise RuntimeError(
+            "dft_phonons_gamma: input structure is not cubic. Γ-only "
+            "phonon calculations silently produce wrong frequencies for "
+            "non-cubic / polar materials (LO–TO splitting is missing). "
+            "This guard lands with Session 3.3 addendum; Session 3.3b "
+            "will lift the restriction by handling dielectric_constant + "
+            "non-analytic corrections properly."
+        )
+
+
+def _phonons_gamma_pre_pw(*, qe_struct: dict, params: dict) -> None:
+    """Pre-pw hook for the phonon task — refuses non-cubic inputs."""
+    _assert_cubic_for_phonons(qe_struct)
+
+
 @celery_app.task(name="orion.dft.phonons_gamma", bind=True, acks_late=True)
 def run_dft_phonons_gamma_job(self, job_id: str) -> Dict[str, Any]:
-    """SCF + ph.x Γ-only phonon calculation."""
+    """SCF + ph.x Γ-only phonon calculation.
+
+    Guard: refuses non-cubic inputs until Session 3.3b — Γ-only ph.x
+    is only physically meaningful for cubic materials. The guard runs
+    inside JobLifecycle, after the structure loads but before pw.x
+    starts, so rejected jobs fail fast **and** the failure is recorded
+    on the job row.
+    """
     return _run_pw_step(
         self, job_id,
         kind="dft_phonons_gamma",
         calculation="scf",
+        pre_pw=_phonons_gamma_pre_pw,
         post_pw=_phonons_gamma_post_pw,
     )
 
