@@ -39,6 +39,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 Prototype = Literal[
     "diamond_cubic", "fcc", "bcc", "hcp", "simple_cubic",
+    "molecule_in_vacuum",
 ]
 
 
@@ -46,8 +47,33 @@ class UnsupportedElement(ValueError):
     """Raised for elements whose ground state ORION's calibration can't handle yet."""
 
 
-# Diatomic gases — need molecule-in-vacuum, not bulk. Refuse for now.
+# Diatomic gases — need molecule-in-vacuum (Session 3.4b).
 DIATOMIC_GAS_ELEMENTS = frozenset({"H", "N", "O", "F", "Cl", "Br", "I"})
+
+
+# Experimental bond lengths for diatomic molecules (Å). Used as the
+# initial geometry; `relax` adjusts it.
+_DIATOMIC_BOND_ANG: Dict[str, float] = {
+    "H": 0.741,   # H₂
+    "N": 1.098,   # N₂
+    "O": 1.208,   # O₂
+    "F": 1.412,   # F₂
+    "Cl": 1.988,  # Cl₂
+    "Br": 2.281,  # Br₂
+    "I": 2.666,   # I₂
+}
+
+# Molecules whose ground state is a triplet (total_magnetization = 2).
+# O₂ is the classic; everything else on this list is also non-trivial
+# for PBE and gets spin_polarized = True. For singlet diatomics
+# (H₂, N₂, F₂, Cl₂) spin-polarization isn't needed but is harmless.
+_TRIPLET_DIATOMICS = frozenset({"O"})
+
+# Default vacuum box edge for molecule-in-vacuum calcs. 15 Å is
+# the minimum that reliably converges PBE O₂ binding to within
+# ~10 meV; 18 Å is tighter. We ship 15 Å default as a cost/accuracy
+# compromise and expose an override.
+_DEFAULT_VACUUM_BOX_ANG = 15.0
 
 # Elements that work only as monoatomic solids (noble gases) — also
 # different workflow (Van der Waals matters). Refuse for now.
@@ -91,6 +117,11 @@ _PROTOTYPE_FOR_ELEMENT: Dict[str, Prototype] = {
     # hcp
     "Mg": "hcp", "Ti": "hcp", "Zn": "hcp", "Co": "hcp", "Zr": "hcp",
     "Ru": "hcp",
+    # molecule-in-vacuum (Session 3.4b). Bond lengths in _DIATOMIC_BOND_ANG.
+    "H": "molecule_in_vacuum", "N": "molecule_in_vacuum",
+    "O": "molecule_in_vacuum", "F": "molecule_in_vacuum",
+    "Cl": "molecule_in_vacuum", "Br": "molecule_in_vacuum",
+    "I": "molecule_in_vacuum",
 }
 
 
@@ -151,6 +182,7 @@ def build_elemental_reference_cell(
     element: str,
     *,
     a_override: Optional[float] = None,
+    vacuum_box_ang: Optional[float] = None,
 ) -> ElementalReferenceCell:
     """Return a starter cell for *element*'s ground-state prototype.
 
@@ -160,23 +192,19 @@ def build_elemental_reference_cell(
         Periodic-table symbol. Case-sensitive (``Si``, not ``si``).
     a_override
         Optional lattice-constant override in Å. When ``None``, uses
-        the experimental value from ``_LATTICE_CONSTANTS_ANG``.
+        the experimental value from ``_LATTICE_CONSTANTS_ANG`` or the
+        diatomic bond length for molecule-in-vacuum prototypes.
+    vacuum_box_ang
+        Cubic vacuum-box edge (Å) for molecule-in-vacuum prototypes.
+        Defaults to 15 Å — a reasonable accuracy/cost tradeoff for
+        PBE at SSSP cutoffs. Only used when prototype is
+        ``molecule_in_vacuum``.
 
     Raises
     ------
     UnsupportedElement
-        For diatomic gases, noble gases, and anything not in
-        ``_PROTOTYPE_FOR_ELEMENT``.
+        For noble gases and anything not in ``_PROTOTYPE_FOR_ELEMENT``.
     """
-    if element in DIATOMIC_GAS_ELEMENTS:
-        raise UnsupportedElement(
-            f"Element {element!r} is a diatomic gas at STP — its reference "
-            "energy requires a molecule-in-vacuum calculation, which ORION "
-            "doesn't support yet (Session 3.4b). Until then, formation "
-            "energies for compounds containing this element can't be "
-            "computed directly. Workaround: supply a hand-computed "
-            "reference via the API or CLI."
-        )
     if element in ATOMIC_SOLID_ONLY:
         raise UnsupportedElement(
             f"Element {element!r} is a noble-gas atomic solid — binding is "
@@ -190,6 +218,30 @@ def build_elemental_reference_cell(
             f"No ground-state prototype registered for element {element!r}. "
             f"Add to backend.common.calibration.references if this is needed."
         )
+
+    if prototype == "molecule_in_vacuum":
+        box = vacuum_box_ang if vacuum_box_ang is not None else _DEFAULT_VACUUM_BOX_ANG
+        bond = a_override if a_override is not None else _DIATOMIC_BOND_ANG[element]
+        # Place the two atoms symmetrically around the box center
+        # along the x-axis. Fractional coords = (center ± bond/2/box).
+        center = 0.5
+        offset = (bond / 2.0) / box
+        lattice = [[box, 0.0, 0.0], [0.0, box, 0.0], [0.0, 0.0, box]]
+        species = [element, element]
+        frac_coords = [
+            [center - offset, center, center],
+            [center + offset, center, center],
+        ]
+        return ElementalReferenceCell(
+            element=element,
+            prototype=prototype,
+            lattice_ang=lattice,
+            species=species,
+            frac_coords=frac_coords,
+            n_atoms=2,
+            a_conv_ang=box,  # box edge, for lack of a better "conventional a"
+        )
+
     a = a_override if a_override is not None else _LATTICE_CONSTANTS_ANG[element]
 
     if prototype == "diamond_cubic":
@@ -227,6 +279,11 @@ def build_elemental_reference_cell(
         n_atoms=n_atoms,
         a_conv_ang=a,
     )
+
+
+def is_triplet_diatomic(element: str) -> bool:
+    """True when the diatomic molecule's ground state is a triplet (spin-polarized)."""
+    return element in _TRIPLET_DIATOMICS
 
 
 def supported_elements() -> List[str]:

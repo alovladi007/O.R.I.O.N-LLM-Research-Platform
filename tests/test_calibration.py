@@ -64,15 +64,41 @@ class TestReferenceCellBuilder:
         prim_len = math.sqrt(sum(x * x for x in cell.lattice_ang[0]))
         assert abs(prim_len - 5.50 / math.sqrt(2)) < 1e-6
 
-    def test_diatomic_gas_rejected(self):
-        from backend.common.calibration import (
-            UnsupportedElement,
-            build_elemental_reference_cell,
-        )
+    def test_diatomic_gas_returns_molecule_in_vacuum(self):
+        """Session 3.4b: diatomics (H, N, O, F, Cl, Br, I) now produce
+        a 2-atom molecule centered in a 15 Å cubic vacuum box.
+        """
+        from backend.common.calibration import build_elemental_reference_cell
+        from backend.common.calibration.references import _DIATOMIC_BOND_ANG
 
         for element in ("H", "N", "O", "F", "Cl"):
-            with pytest.raises(UnsupportedElement, match="diatomic"):
-                build_elemental_reference_cell(element)
+            cell = build_elemental_reference_cell(element)
+            assert cell.prototype == "molecule_in_vacuum"
+            assert cell.n_atoms == 2
+            assert cell.species == [element, element]
+            # Box is cubic 15 Å default.
+            assert cell.lattice_ang[0][0] == pytest.approx(15.0)
+            assert cell.lattice_ang[1][1] == pytest.approx(15.0)
+            assert cell.lattice_ang[2][2] == pytest.approx(15.0)
+            # Atoms placed symmetrically around the box center along x.
+            x0 = cell.frac_coords[0][0] * 15.0
+            x1 = cell.frac_coords[1][0] * 15.0
+            bond_len = abs(x1 - x0)
+            assert bond_len == pytest.approx(_DIATOMIC_BOND_ANG[element], abs=0.01)
+
+    def test_vacuum_box_override(self):
+        from backend.common.calibration import build_elemental_reference_cell
+
+        cell = build_elemental_reference_cell("O", vacuum_box_ang=20.0)
+        assert cell.lattice_ang[0][0] == pytest.approx(20.0)
+        assert cell.a_conv_ang == pytest.approx(20.0)
+
+    def test_oxygen_is_triplet(self):
+        from backend.common.calibration.references import is_triplet_diatomic
+
+        assert is_triplet_diatomic("O") is True
+        assert is_triplet_diatomic("H") is False
+        assert is_triplet_diatomic("N") is False
 
     def test_noble_gas_rejected(self):
         from backend.common.calibration import (
@@ -390,11 +416,19 @@ class TestLiveCalibrationFixture:
         with _CALIBRATION_FIXTURE.open() as f:
             return json.load(f)
 
-    def test_six_elements_captured(self):
+    def test_core_elements_captured(self):
+        """The calibration fixture evolves as the roadmap's element
+        coverage expands. Session 3.4 captured 6 bulk metals; 3.4b
+        adds O + Cl. Later sessions may add H/N/F/Br/I. This test
+        asserts the *minimum* coverage needed for the compound
+        cross-validation against seeded MP fixtures — expanding the
+        set is a feature, not a failure mode.
+        """
         data = self._load()
-        assert len(data) == 6
         elements = {r["element"] for r in data}
-        assert elements == {"Si", "Cu", "Al", "Na", "Sr", "Ti"}
+        must_have = {"Si", "Cu", "Al", "Na", "Sr", "Ti"}  # 3.4 bulk metals
+        assert must_have <= elements, f"missing: {must_have - elements}"
+        assert len(data) >= 6
 
     def test_si_relaxed_a_within_1pct_of_experiment(self):
         """Closes the Session 3.3 open item. The 3.3 test compared Si's
@@ -449,6 +483,90 @@ class TestLiveCalibrationFixture:
             })
         report = run_cross_validation(fixtures, calc)
         # Every element-against-itself should give E_f_per_atom = 0.
-        assert len(report.ok_entries()) == 6
+        assert len(report.ok_entries()) == len(data)
         assert report.mae_ev_per_atom() == pytest.approx(0.0, abs=1e-9)
         assert report.max_abs_deviation_ev_per_atom() == pytest.approx(0.0, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Compound cross-validation against real MP values (Session 3.4b)
+# ---------------------------------------------------------------------------
+
+
+_COMPOUND_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "calibration"
+    / "compound_scf_pbe_sssp_efficiency_1.3.0.json"
+)
+
+
+@pytest.mark.skipif(
+    not _CALIBRATION_FIXTURE.is_file() or not _COMPOUND_FIXTURE.is_file(),
+    reason=(
+        "compound fixture not generated; run scripts/orion_scf_compound.py "
+        "after a full calibration to produce "
+        "tests/fixtures/calibration/compound_scf_*.json"
+    ),
+)
+class TestCompoundCrossValidation:
+    """Session 3.4b. Once element references exist *and* a compound SCF
+    has been run, the cross-validation harness can report a real MAE
+    against MP formation energies. This class loads both fixtures and
+    asserts the deviation is in the PBE-realistic band.
+
+    For NaCl at PBE+SSSP, the published MP formation energy is
+    -2.07 eV/atom. PBE systematic errors for this class of ionic
+    solids are typically 0.1–0.3 eV/atom (MP's own reference treatment
+    includes empirical oxide/halide corrections that we do NOT
+    replicate — so we expect our raw deviation to be 0.1–0.4 eV/atom).
+    """
+
+    def _load_refs(self):
+        import json
+        return {r["element"]: r["energy_per_atom_ev"]
+                for r in json.load(_CALIBRATION_FIXTURE.open())}
+
+    def _load_compounds(self):
+        import json
+        return json.load(_COMPOUND_FIXTURE.open())
+
+    def test_nacl_formation_energy_within_pbe_band(self):
+        from backend.common.calibration import (
+            FormationEnergyCalculator,
+            run_cross_validation,
+        )
+
+        refs = self._load_refs()
+        for required in ("Na", "Cl"):
+            if required not in refs:
+                pytest.skip(f"reference for {required} missing")
+
+        compounds = self._load_compounds()
+        nacl = next((c for c in compounds if c.get("formula") == "NaCl"), None)
+        if nacl is None:
+            pytest.skip("NaCl compound SCF not in fixture")
+
+        calc = FormationEnergyCalculator(
+            functional="PBE",
+            pseudo_family="SSSP_efficiency_1.3.0",
+            references=refs,
+        )
+        fixtures = [{
+            "mp_id": "mp-22862",
+            "formula": "NaCl",
+            "formation_energy_per_atom": -2.07,
+            "orion_total_energy_ev": nacl["total_energy_ev"],
+            "orion_species": nacl["species"],
+        }]
+        report = run_cross_validation(fixtures, calc)
+        assert len(report.ok_entries()) == 1
+        deviation = abs(report.entries[0].deviation_ev_per_atom)
+        # PBE + SSSP, without MP's empirical halide correction, typically
+        # mispredicts NaCl formation by ~0.2–0.5 eV/atom. We use 0.6
+        # eV/atom as a loose but not-vacuous sanity bound. A deviation
+        # beyond that signals a bug (wrong reference, wrong structure,
+        # etc.), not just functional error.
+        assert deviation < 0.6, (
+            f"NaCl formation energy deviation = {deviation:.3f} eV/atom "
+            f"(ORION = {report.entries[0].orion_e_f_per_atom_ev:.3f}, "
+            f"MP = -2.07)"
+        )

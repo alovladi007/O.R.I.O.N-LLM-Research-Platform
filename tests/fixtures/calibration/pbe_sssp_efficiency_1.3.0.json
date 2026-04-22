@@ -1,24 +1,46 @@
 [
   {
-    "element": "Si",
+    "element": "Al",
     "functional": "PBE",
     "pseudo_family": "SSSP_efficiency_1.3.0",
-    "energy_per_atom_ev": -155.3746707954956,
-    "n_atoms_in_reference_cell": 2,
-    "reference_prototype": "diamond_cubic",
-    "relaxed_a_ang": 5.469210472,
+    "energy_per_atom_ev": -537.4722009997987,
+    "n_atoms_in_reference_cell": 1,
+    "reference_prototype": "fcc",
+    "relaxed_a_ang": 4.041227354,
     "extra_metadata": {
-      "ecutwfc_ry": 43.74353160781668,
-      "ecutrho_ry": 349.9482528625334,
+      "ecutwfc_ry": 29.49430082155506,
+      "ecutrho_ry": 235.9544065724405,
       "kpoints": [
-        9,
-        9,
-        9
+        11,
+        11,
+        11
       ],
       "pseudo_dir": "/Users/vladimirantoine/orion/pseudos/SSSP_1.3.0_PBE_efficiency",
-      "n_scf_iterations": 7,
-      "wall_time_seconds": 19.32,
-      "seed_a_ang": 5.431
+      "n_scf_iterations": 5,
+      "wall_time_seconds": 6.54,
+      "seed_a_ang": 4.046
+    }
+  },
+  {
+    "element": "Cl",
+    "functional": "PBE",
+    "pseudo_family": "SSSP_efficiency_1.3.0",
+    "energy_per_atom_ev": -452.89605276109717,
+    "n_atoms_in_reference_cell": 2,
+    "reference_prototype": "molecule_in_vacuum",
+    "relaxed_a_ang": 2.004233935885659,
+    "extra_metadata": {
+      "ecutwfc_ry": 40.0,
+      "ecutrho_ry": 320.0,
+      "kpoints": [
+        1,
+        1,
+        1
+      ],
+      "pseudo_dir": "/Users/vladimirantoine/orion/pseudos/SSSP_1.3.0_PBE_efficiency",
+      "n_scf_iterations": 9,
+      "wall_time_seconds": 425.02,
+      "seed_a_ang": 15.0
     }
   },
   {
@@ -44,28 +66,6 @@
     }
   },
   {
-    "element": "Al",
-    "functional": "PBE",
-    "pseudo_family": "SSSP_efficiency_1.3.0",
-    "energy_per_atom_ev": -537.4722009997987,
-    "n_atoms_in_reference_cell": 1,
-    "reference_prototype": "fcc",
-    "relaxed_a_ang": 4.041227354,
-    "extra_metadata": {
-      "ecutwfc_ry": 29.49430082155506,
-      "ecutrho_ry": 235.9544065724405,
-      "kpoints": [
-        11,
-        11,
-        11
-      ],
-      "pseudo_dir": "/Users/vladimirantoine/orion/pseudos/SSSP_1.3.0_PBE_efficiency",
-      "n_scf_iterations": 5,
-      "wall_time_seconds": 6.54,
-      "seed_a_ang": 4.046
-    }
-  },
-  {
     "element": "Na",
     "functional": "PBE",
     "pseudo_family": "SSSP_efficiency_1.3.0",
@@ -85,6 +85,50 @@
       "n_scf_iterations": 6,
       "wall_time_seconds": 18.85,
       "seed_a_ang": 4.29
+    }
+  },
+  {
+    "element": "O",
+    "functional": "PBE",
+    "pseudo_family": "SSSP_efficiency_1.3.0",
+    "energy_per_atom_ev": -564.93775996101,
+    "n_atoms_in_reference_cell": 2,
+    "reference_prototype": "molecule_in_vacuum",
+    "relaxed_a_ang": 1.2220592455301063,
+    "extra_metadata": {
+      "ecutwfc_ry": 46.64945256704748,
+      "ecutrho_ry": 373.19562053637986,
+      "kpoints": [
+        1,
+        1,
+        1
+      ],
+      "pseudo_dir": "/Users/vladimirantoine/orion/pseudos/SSSP_1.3.0_PBE_efficiency",
+      "n_scf_iterations": 9,
+      "wall_time_seconds": 387.52,
+      "seed_a_ang": 15.0
+    }
+  },
+  {
+    "element": "Si",
+    "functional": "PBE",
+    "pseudo_family": "SSSP_efficiency_1.3.0",
+    "energy_per_atom_ev": -155.3746707954956,
+    "n_atoms_in_reference_cell": 2,
+    "reference_prototype": "diamond_cubic",
+    "relaxed_a_ang": 5.469210472,
+    "extra_metadata": {
+      "ecutwfc_ry": 43.74353160781668,
+      "ecutrho_ry": 349.9482528625334,
+      "kpoints": [
+        9,
+        9,
+        9
+      ],
+      "pseudo_dir": "/Users/vladimirantoine/orion/pseudos/SSSP_1.3.0_PBE_efficiency",
+      "n_scf_iterations": 7,
+      "wall_time_seconds": 19.32,
+      "seed_a_ang": 5.431
     }
   },
   {

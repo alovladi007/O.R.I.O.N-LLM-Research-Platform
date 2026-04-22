@@ -23,6 +23,7 @@ from .references import (
     ElementalReferenceCell,
     UnsupportedElement,
     build_elemental_reference_cell,
+    is_triplet_diatomic,
     supported_elements,
 )
 from .cross_validate import (
@@ -36,6 +37,7 @@ from .runner import (
     CalibrationResult,
     run_element_calibration,
 )
+from .scf_compound import CompoundSCFResult, run_compound_scf
 
 __all__ = [
     "ATOMIC_SOLID_ONLY",
@@ -48,10 +50,13 @@ __all__ = [
     "FormationEnergyResult",
     "MissingReferenceError",
     "UnsupportedElement",
+    "CompoundSCFResult",
     "CrossValidationEntry",
     "CrossValidationReport",
     "build_elemental_reference_cell",
+    "is_triplet_diatomic",
     "make_db_lookup",
+    "run_compound_scf",
     "run_cross_validation",
     "run_element_calibration",
     "supported_elements",

@@ -247,10 +247,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             failed.append((element, str(exc)))
             continue
         dt = time.time() - t0
+        a_str = (
+            f"{cal_result.relaxed_a_ang:.3f} Å"
+            if cal_result.relaxed_a_ang is not None else "n/a"
+        )
         print(
             f"  OK in {dt:.1f}s: {cal_result.energy_per_atom_ev:.4f} eV/atom "
             f"(prototype={cal_result.reference_prototype}, "
-            f"a_relaxed={cal_result.relaxed_a_ang:.3f} Å)"
+            f"a_relaxed={a_str})"
         )
         results.append(cal_result)
 

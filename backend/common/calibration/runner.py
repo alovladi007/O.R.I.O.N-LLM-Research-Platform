@@ -42,18 +42,20 @@ def run_element_calibration(
     functional: str = DEFAULT_FUNCTIONAL,
     pseudo_family: str = DEFAULT_PSEUDO_FAMILY,
     a_override: Optional[float] = None,
+    vacuum_box_ang: Optional[float] = None,
     run_dir_parent: Optional[Path] = None,
     cpus: int = 1,
     walltime_minutes: int = 30,
 ) -> CalibrationResult:
     """Relax + SCF the elemental reference cell for *element* and return the result.
 
-    Uses the existing Session 3.1–3.3 stack:
+    Two modes, selected by prototype:
 
-    1. :func:`build_elemental_reference_cell` picks the prototype + seed cell.
-    2. :func:`generate_pw_input` with ``calculation='vc-relax'``.
-    3. :func:`run_pw` through the execution backend.
-    4. Parse the relaxed energy + lattice; return per-atom energy.
+    - **Bulk crystals** (``diamond_cubic`` / ``fcc`` / ``bcc`` / ``hcp``):
+      ``vc-relax`` at the automatic k-mesh derived from the lattice.
+    - **Diatomic gases** (``molecule_in_vacuum``): ``relax`` in a
+      fixed 15 Å cubic box, Γ-only k-sampling, spin-polarized when the
+      ground state is a triplet (O₂ notably).
 
     The caller persists the :class:`CalibrationResult` to the
     ``reference_energies`` table (or handles UniqueConstraint collisions
@@ -67,20 +69,41 @@ def run_element_calibration(
     from backend.common.engines.qe_run import run_pw
     from backend.common.workers import build_run_dir
 
-    from .references import build_elemental_reference_cell
+    from .references import build_elemental_reference_cell, is_triplet_diatomic
 
-    ref_cell = build_elemental_reference_cell(element, a_override=a_override)
+    ref_cell = build_elemental_reference_cell(
+        element, a_override=a_override, vacuum_box_ang=vacuum_box_ang,
+    )
     qe_struct = ref_cell.as_qe_struct()
 
     registry = PseudopotentialRegistry(Path(pseudo_dir).expanduser())
-    params = QEInputParams(
-        prefix=f"cal_{element.lower()}",
-        calculation="vc-relax",
-        occupations="smearing",
-        smearing="gauss",
-        degauss=0.01,
-    )
-    rendered = generate_pw_input(qe_struct, params, registry)
+
+    # Prototype-specific QE parameters.
+    if ref_cell.prototype == "molecule_in_vacuum":
+        # Relax (not vc-relax) so the 15 Å box stays 15 Å.
+        # Γ-only k-sampling — there's no periodicity to sample.
+        # Triplet diatomics (O₂) need spin polarization + fixed
+        # tot_magnetization = 2.
+        triplet = is_triplet_diatomic(element)
+        qe_params = QEInputParams(
+            prefix=f"cal_{element.lower()}",
+            calculation="relax",
+            occupations="smearing",
+            smearing="gauss",
+            degauss=0.01,
+            kpoints=(1, 1, 1),
+            spin_polarized=triplet,
+            tot_magnetization=2.0 if triplet else None,
+        )
+    else:
+        qe_params = QEInputParams(
+            prefix=f"cal_{element.lower()}",
+            calculation="vc-relax",
+            occupations="smearing",
+            smearing="gauss",
+            degauss=0.01,
+        )
+    rendered = generate_pw_input(qe_struct, qe_params, registry)
 
     run_dir = build_run_dir(f"calibration-{element}", parent=run_dir_parent)
     pw_result = run_pw(
@@ -113,7 +136,10 @@ def run_element_calibration(
     if output.relaxed is not None:
         # For diamond_cubic / fcc stored as primitive → conventional via sqrt(2).
         # For bcc primitive → conventional via 2/sqrt(3). For hcp, we store
-        # the a-axis of the conventional cell directly.
+        # the a-axis of the conventional cell directly. For
+        # molecule_in_vacuum, we store the relaxed *bond length*
+        # (distance between the two atoms) — a more useful reference
+        # number than the box edge.
         import math
         prim_a = output.relaxed.a_lattice_const_ang
         if ref_cell.prototype in ("diamond_cubic", "fcc"):
@@ -122,6 +148,13 @@ def run_element_calibration(
             relaxed_a_ang = prim_a * 2 / math.sqrt(3)
         elif ref_cell.prototype == "hcp":
             relaxed_a_ang = prim_a
+        elif ref_cell.prototype == "molecule_in_vacuum":
+            coords = output.relaxed.cart_coords_ang
+            if len(coords) >= 2:
+                dx = coords[1][0] - coords[0][0]
+                dy = coords[1][1] - coords[0][1]
+                dz = coords[1][2] - coords[0][2]
+                relaxed_a_ang = math.sqrt(dx * dx + dy * dy + dz * dz)
         else:
             relaxed_a_ang = prim_a
 

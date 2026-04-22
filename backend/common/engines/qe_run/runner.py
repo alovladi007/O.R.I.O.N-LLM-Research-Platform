@@ -164,8 +164,13 @@ def run_pw(
         _label_forces(output, species_hint)
 
     returncode = _rc_from_state(state)
-    success = state == JobState.COMPLETED and (
-        output is not None and output.convergence.value == "converged"
+    # ok and bfgs_unconverged both count as success — the former is
+    # cleanly converged, the latter is "SCF fine, geometry relaxation
+    # didn't fully settle." Both produce a trustworthy-enough energy
+    # for downstream use; the caller sees the stage to decide.
+    convergence_value = output.convergence.value if output else None
+    success = state == JobState.COMPLETED and convergence_value in (
+        "converged", "bfgs_unconverged",
     )
 
     if output is None:
@@ -175,12 +180,19 @@ def run_pw(
         stage = "nonzero_exit"
         error_message = (
             f"pw.x exited non-zero ({state.value}); "
-            f"convergence={output.convergence.value}"
+            f"convergence={convergence_value}"
         )
-    elif output.convergence.value != "converged":
+    elif convergence_value == "bfgs_unconverged":
+        stage = "bfgs_unconverged"
+        error_message = (
+            "pw.x exit=0 but geometry relaxation did not fully converge. "
+            "Final energy is usable but forces may exceed forc_conv_thr. "
+            "See BFGS history in stdout."
+        )
+    elif convergence_value != "converged":
         stage = "unconverged"
         error_message = (
-            f"pw.x exit=0 but convergence={output.convergence.value}"
+            f"pw.x exit=0 but convergence={convergence_value}"
         )
     else:
         stage = "ok"

@@ -46,7 +46,9 @@ class PWOutputParseError(ValueError):
 
 class ConvergenceStatus(str, enum.Enum):
     CONVERGED = "converged"
-    UNCONVERGED = "unconverged"
+    UNCONVERGED = "unconverged"              # SCF itself failed to converge (fatal)
+    BFGS_UNCONVERGED = "bfgs_unconverged"    # SCF converged but geometry relax
+                                             # stalled. Final energy usable.
     UNKNOWN = "unknown"          # parse couldn't tell — treat as failure
     ERRORED = "errored"          # explicit error marker in output
 
@@ -293,9 +295,23 @@ _SCF_ACCURACY_RE = re.compile(
     r"estimated scf accuracy\s*<\s*([-\d.Ee+]+)\s*Ry",
 )
 
-# "     convergence NOT achieved after 200 iterations: stopping"
+# Two kinds of "NOT achieved" pw.x emits:
+#
+# 1. SCF non-convergence — fatal: "convergence NOT achieved after N
+#    iterations: stopping". This means the electronic loop diverged
+#    and no trustworthy energy exists.
+# 2. BFGS non-convergence — often NOT fatal: "bfgs failed after X scf
+#    cycles and Y bfgs steps, convergence not achieved". Here each SCF
+#    did converge; only the geometry-relaxation loop hit the step
+#    limit. The final energy is usable as an approximate minimum.
+#
+# Different status codes for each so the task layer can decide.
 _SCF_UNCONV_RE = re.compile(
-    r"convergence\s+NOT\s+achieved", re.IGNORECASE,
+    r"convergence\s+NOT\s+achieved\s+after\s+\d+\s+iterations:\s+stopping",
+    re.IGNORECASE,
+)
+_BFGS_UNCONV_RE = re.compile(
+    r"bfgs\s+failed\s+after.*convergence\s+not\s+achieved", re.IGNORECASE,
 )
 
 # Atomic counts from the preamble
@@ -304,7 +320,17 @@ _NTYP_RE = re.compile(r"number of atomic types\s*=\s*(\d+)")
 _NELEC_RE = re.compile(r"number of electrons\s*=\s*([-\d.]+)")
 
 # Wall time: "     PWSCF        :     0.30s CPU      0.40s WALL"
-_WALL_RE = re.compile(r"PWSCF\s*:\s*[\d.]+s\s+CPU\s+([\d.]+)s\s+WALL", re.IGNORECASE)
+# pw.x emits the final PWSCF timer in two styles:
+#   "PWSCF        :     0.30s CPU      0.40s WALL"            (short runs)
+#   "PWSCF        :   5m56.46s CPU   6m21.02s WALL"            (longer)
+#   "PWSCF        :  1h10m 5.12s CPU  1h11m20.5s WALL"         (very long)
+# We accept all three and convert to seconds.
+_WALL_RE = re.compile(
+    r"PWSCF\s*:\s*"
+    r"(?:\d+h\s*)?(?:\d+m\s*)?[\d.]+s\s+CPU\s+"
+    r"(?:(\d+)h\s*)?(?:(\d+)m\s*)?([\d.]+)s\s+WALL",
+    re.IGNORECASE,
+)
 
 # Forces block starts with "Forces acting on atoms (cartesian axes, Ry/au):"
 # then atom lines "atom    1 type  1   force =    0.001  0.002  0.003"
@@ -342,6 +368,15 @@ _ERROR_TEXT_RE = re.compile(
 
 # "lattice parameter (alat)  =      10.2000  a.u."
 _ALAT_RE = re.compile(r"lattice parameter \(alat\)\s*=\s*([-\d.Ee+]+)\s*a\.u\.")
+
+# Preamble crystal axes, used when CELL_PARAMETERS is absent:
+#   a(1) = (   1.000000   0.000000   0.000000 )
+# All three ai vectors follow each other. Units are alat.
+_PREAMBLE_AXES_RE = re.compile(
+    r"a\(1\)\s*=\s*\(\s*([-\d.Ee+]+)\s+([-\d.Ee+]+)\s+([-\d.Ee+]+)\s*\)\s*\n"
+    r"\s*a\(2\)\s*=\s*\(\s*([-\d.Ee+]+)\s+([-\d.Ee+]+)\s+([-\d.Ee+]+)\s*\)\s*\n"
+    r"\s*a\(3\)\s*=\s*\(\s*([-\d.Ee+]+)\s+([-\d.Ee+]+)\s+([-\d.Ee+]+)\s*\)"
+)
 # "CELL_PARAMETERS (alat= 10.20)" followed by 3 lines of 3 floats
 _CELL_PARAMS_ALAT_RE = re.compile(
     r"CELL_PARAMETERS \(alat=\s*([-\d.Ee+]+)\)\s*\n"
@@ -430,7 +465,7 @@ def parse_pw_output(source: str | Path) -> PWOutput:
     convergence = _parse_convergence(text)
     n_scf = _maybe_int(_SCF_CONVERGED_RE, text)
     scf_acc = _maybe_float(_SCF_ACCURACY_RE, text)
-    wall = _maybe_float(_WALL_RE, text)
+    wall = _parse_wall_seconds(text)
     errors = _collect_errors(text)
     nat = _maybe_int(_NAT_RE, text)
     ntyp = _maybe_int(_NTYP_RE, text)
@@ -541,13 +576,33 @@ def _parse_stress(text: str) -> Optional[ParsedStress]:
 
 
 def _parse_convergence(text: str) -> ConvergenceStatus:
+    # Fatal SCF divergence trumps everything — the energy is untrustworthy.
     if _SCF_UNCONV_RE.search(text):
         return ConvergenceStatus.UNCONVERGED
+    # BFGS (geometry-relax) hit its step limit but individual SCFs
+    # converged. Energy is approximate but usable; the caller gets a
+    # distinct status so they can decide whether to accept it.
+    if _BFGS_UNCONV_RE.search(text):
+        return ConvergenceStatus.BFGS_UNCONVERGED
     if _SCF_CONVERGED_RE.search(text):
         return ConvergenceStatus.CONVERGED
     if _ERROR_BANNER_RE.search(text):
         return ConvergenceStatus.ERRORED
     return ConvergenceStatus.UNKNOWN
+
+
+def _parse_wall_seconds(text: str) -> Optional[float]:
+    """Extract PWSCF wall time. Accepts h/m/s forms; converts to seconds."""
+    m = _WALL_RE.search(text)
+    if m is None:
+        return None
+    h = int(m.group(1)) if m.group(1) else 0
+    mm = int(m.group(2)) if m.group(2) else 0
+    try:
+        s = float(m.group(3))
+    except (TypeError, ValueError):
+        return None
+    return h * 3600.0 + mm * 60.0 + s
 
 
 def _collect_errors(text: str) -> List[str]:
@@ -620,9 +675,19 @@ def _parse_relaxed(text: str) -> Optional[RelaxedStructure]:
             [float(m.group(i)) * scale_ang for i in (8, 9, 10)],
         ]
     else:
-        # Plain relax: cell is unchanged. Use the initial alat + identity.
-        # Not worth the complexity — return None if we can't see a cell.
-        return None
+        # Plain relax: cell is unchanged. Pull it from the preamble's
+        # "crystal axes" block, which prints a_i in units of alat.
+        alat_m = _ALAT_RE.search(text)
+        axes_m = _PREAMBLE_AXES_RE.search(text)
+        if alat_m is None or axes_m is None:
+            return None
+        alat_bohr = float(alat_m.group(1))
+        scale_ang = alat_bohr * BOHR_TO_ANG
+        lat_ang = [
+            [float(axes_m.group(i)) * scale_ang for i in (1, 2, 3)],
+            [float(axes_m.group(i)) * scale_ang for i in (4, 5, 6)],
+            [float(axes_m.group(i)) * scale_ang for i in (7, 8, 9)],
+        ]
 
     # Positions: last ATOMIC_POSITIONS block after "Begin final coordinates".
     final_block_start = text.index("Begin final coordinates")

@@ -1,0 +1,24 @@
+[
+  {
+    "mp_id": "mp-22862",
+    "formula": "NaCl",
+    "total_energy_ev": -1753.8210132674715,
+    "species": [
+      "Cl",
+      "Na"
+    ],
+    "n_atoms": 2,
+    "formation_energy_per_atom_mp": -2.07,
+    "extra_metadata": {
+      "ecutwfc_ry": 40.0,
+      "ecutrho_ry": 320.0,
+      "kpoints": [
+        8,
+        8,
+        8
+      ],
+      "n_scf_iterations": 8,
+      "wall_time_seconds": 5.82
+    }
+  }
+]

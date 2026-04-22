@@ -160,6 +160,157 @@ class TestParseUnconvergedScf:
 # ---------------------------------------------------------------------------
 
 
+class TestParseBFGSUnconverged:
+    """Session 3.4b addition. A vc-relax that converged its SCF but
+    failed BFGS step limits should report ``bfgs_unconverged``, not
+    fatal ``unconverged``. The energy is usable as an approximate
+    minimum. Caught by a false positive during live O₂ calibration.
+    """
+
+    _BFGS_FAIL_FRAGMENT = """
+     Program PWSCF v.7.5 starts
+     number of atoms/cell      =            2
+     bravais-lattice index     =            0
+     kinetic-energy cutoff     =      46.6000  Ry
+
+     Self-consistent Calculation
+     convergence has been achieved in   9 iterations
+
+     Self-consistent Calculation
+     convergence has been achieved in   5 iterations
+
+     bfgs failed after   6 scf cycles and   3 bfgs steps, convergence not achieved
+
+!    total energy              =     -83.04485614 Ry
+
+     PWSCF        :     5m59.49s CPU   6m29.09s WALL
+"""
+
+    def test_bfgs_unconverged_distinct_from_unconverged(self):
+        from backend.common.engines.qe_run import (
+            ConvergenceStatus,
+            parse_pw_output,
+        )
+
+        result = parse_pw_output(self._BFGS_FAIL_FRAGMENT)
+        assert result.convergence == ConvergenceStatus.BFGS_UNCONVERGED
+        # Energy still parseable.
+        assert result.energy is not None
+        assert result.energy.total_ry == pytest.approx(-83.04485, abs=1e-4)
+
+    def test_scf_unconverged_takes_priority_over_bfgs(self):
+        """When SCF itself diverges, that's fatal. We must NOT
+        misclassify as bfgs_unconverged."""
+        from backend.common.engines.qe_run import (
+            ConvergenceStatus,
+            parse_pw_output,
+        )
+
+        text = (
+            "convergence NOT achieved after 200 iterations: stopping\n"
+            "bfgs failed after 6 scf cycles and 3 bfgs steps, convergence not achieved\n"
+        )
+        result = parse_pw_output(text)
+        assert result.convergence == ConvergenceStatus.UNCONVERGED
+
+
+class TestParseWallTime:
+    """Wall-time regex handles pw.x's multiple timer formats.
+    The failure during O₂ calibration surfaced the missing h/m support.
+    """
+
+    def test_short_run_plain_seconds(self):
+        from backend.common.engines.qe_run import parse_pw_output
+
+        text = (
+            "     Self-consistent Calculation\n"
+            "     convergence has been achieved in 3 iterations\n"
+            "!    total energy              =     -15.83 Ry\n"
+            "     PWSCF        :     0.30s CPU      0.40s WALL\n"
+        )
+        r = parse_pw_output(text)
+        assert r.wall_time_seconds == pytest.approx(0.40, abs=1e-3)
+
+    def test_medium_run_minutes(self):
+        from backend.common.engines.qe_run import parse_pw_output
+
+        text = (
+            "     Self-consistent Calculation\n"
+            "     convergence has been achieved in 9 iterations\n"
+            "!    total energy              =     -83.04 Ry\n"
+            "     PWSCF        :   5m59.49s CPU   6m21.02s WALL\n"
+        )
+        r = parse_pw_output(text)
+        # 6*60 + 21.02 = 381.02
+        assert r.wall_time_seconds == pytest.approx(381.02, abs=1e-3)
+
+    def test_long_run_hours(self):
+        from backend.common.engines.qe_run import parse_pw_output
+
+        text = (
+            "     Self-consistent Calculation\n"
+            "     convergence has been achieved in 9 iterations\n"
+            "!    total energy              =     -1000.0 Ry\n"
+            "     PWSCF        :  1h10m 5.12s CPU  1h11m20.5s WALL\n"
+        )
+        r = parse_pw_output(text)
+        # 1h * 3600 + 11m * 60 + 20.5 = 3600 + 660 + 20.5 = 4280.5
+        assert r.wall_time_seconds == pytest.approx(4280.5, abs=1e-3)
+
+
+class TestParsePositionOnlyRelax:
+    """A plain ``calculation='relax'`` (not vc-relax) emits no
+    CELL_PARAMETERS block — the cell is fixed. The parser must fall
+    back to the preamble's ``crystal axes`` block. This was the second
+    bug from the O₂ calibration: relaxed=None even though the relax
+    finished.
+    """
+
+    _RELAX_FRAGMENT = """
+     Program PWSCF v.7.5 starts
+     lattice parameter (alat)  =      28.3459  a.u.
+     number of atoms/cell      =            2
+
+     crystal axes: (cart. coord. in units of alat)
+               a(1) = (   1.000000   0.000000   0.000000 )
+               a(2) = (   0.000000   1.000000   0.000000 )
+               a(3) = (   0.000000   0.000000   1.000000 )
+
+     Self-consistent Calculation
+     convergence has been achieved in 9 iterations
+
+     Begin final coordinates
+
+     ATOMIC_POSITIONS (crystal)
+     O                0.4592647035        0.5000000000        0.5000000000
+     O                0.5407352965        0.5000000000        0.5000000000
+     End final coordinates
+
+!    total energy              =     -83.04485614 Ry
+"""
+
+    def test_positions_only_relax_extracts_lattice_from_preamble(self):
+        from backend.common.engines.qe_run import parse_pw_output
+
+        r = parse_pw_output(self._RELAX_FRAGMENT)
+        assert r.relaxed is not None
+        # 15 Å box: alat is 28.3459 a.u. ≈ 15 Å. Lattice should be ~15 on diagonal.
+        assert r.relaxed.lattice_ang[0][0] == pytest.approx(15.0, abs=0.05)
+        assert r.relaxed.lattice_ang[1][1] == pytest.approx(15.0, abs=0.05)
+        assert r.relaxed.lattice_ang[2][2] == pytest.approx(15.0, abs=0.05)
+
+    def test_positions_only_relax_computes_bond_length(self):
+        """For the O₂ fragment, distance between the two atoms in Å."""
+        import math
+        from backend.common.engines.qe_run import parse_pw_output
+
+        r = parse_pw_output(self._RELAX_FRAGMENT)
+        c = r.relaxed.cart_coords_ang
+        bond = math.sqrt(sum((c[1][i] - c[0][i]) ** 2 for i in range(3)))
+        # 0.0815 * 15 Å ≈ 1.22 Å — PBE-typical O₂ bond.
+        assert 1.15 < bond < 1.30
+
+
 class TestParseErrored:
     def test_error_banner_marks_errored(self):
         from backend.common.engines.qe_run import (
