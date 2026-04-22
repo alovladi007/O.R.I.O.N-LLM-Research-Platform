@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import ValidationError as PydValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -210,6 +210,97 @@ async def get_workflow_manifest(
     return build_workflow_manifest(
         workflow_run_id=str(run.id), name=run.name, step_records=records,
     )
+
+
+# ---------------------------------------------------------------------------
+# Template endpoints — Session 3.3
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/templates/qe/{template_name}",
+    response_model=WorkflowRunResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit a pre-built QE workflow (Session 3.3)",
+    description=(
+        "Short-circuits spec authoring: pass `structure_id` as a query "
+        "param and the matching template (from "
+        "`backend.common.workflows.templates.qe`) is constructed + "
+        "submitted. Available templates: `relax_then_static`, "
+        "`band_structure`, `dos`, `phonons_gamma`."
+    ),
+)
+async def submit_qe_template(
+    template_name: str,
+    structure_id: uuid.UUID = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> WorkflowRunResponse:
+    if not current_user.can_run_simulations():
+        raise AuthorizationError("You don't have permission to run workflows")
+
+    from backend.common.workflows.templates.qe import SPEC_BUILDERS
+
+    builder = SPEC_BUILDERS.get(template_name)
+    if builder is None:
+        raise ValidationError(
+            f"Unknown QE template {template_name!r}",
+            details={"known": sorted(SPEC_BUILDERS)},
+        )
+
+    # Structure must exist.
+    from ..models import Structure
+
+    structure = await db.get(Structure, structure_id)
+    if structure is None:
+        raise NotFoundError("Structure", structure_id)
+
+    spec = builder(str(structure_id))
+    # Reuse the submit_workflow_run path so validation + tick kick is
+    # shared.
+    from backend.common.workflows import expand_foreach, toposort_steps
+
+    expanded = expand_foreach(spec)
+    toposort_steps(expanded)  # raises on cycle / unknown deps
+
+    run = WorkflowRun(
+        owner_id=current_user.id,
+        name=expanded.name,
+        description=expanded.description,
+        status=WorkflowRunStatus.PENDING.value,
+        spec=expanded.model_dump(),
+    )
+    db.add(run)
+    await db.flush()
+
+    topo_idx = {sid: i for i, sid in enumerate([s.id for s in expanded.steps])}
+    for step in expanded.steps:
+        db.add(
+            WorkflowRunStep(
+                workflow_run_id=run.id,
+                step_id=step.id,
+                kind=step.kind,
+                status=WorkflowStepStatus.PENDING.value,
+                topo_index=topo_idx[step.id],
+                spec=step.model_dump(),
+            )
+        )
+    await db.commit()
+
+    try:
+        from src.worker.celery_app import celery_app
+
+        celery_app.send_task("orion.workflows.tick")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("template submit: could not kick workflow tick: %s", exc)
+
+    loaded = await _reload_run_with_steps(db, run.id)
+    return WorkflowRunResponse.model_validate(loaded)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 
 async def _reload_run_with_steps(db: AsyncSession, run_id: uuid.UUID):

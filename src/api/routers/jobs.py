@@ -768,7 +768,11 @@ async def get_job_status_summary(
 # more.
 _DISPATCH_TASKS: dict[str, str] = {
     "mock_static": "orion.mock.static",
-    "dft_static": "orion.dft.static",   # Session 3.2
+    "dft_static": "orion.dft.static",          # Session 3.2
+    "dft_relax": "orion.dft.relax",            # Session 3.3
+    "dft_bands": "orion.dft.bands",            # Session 3.3
+    "dft_dos": "orion.dft.dos",                # Session 3.3
+    "dft_phonons_gamma": "orion.dft.phonons_gamma",   # Session 3.3
 }
 
 # Built-in workflow templates, materialized lazily so the mock dispatch
@@ -798,6 +802,76 @@ _BUILTIN_TEMPLATES: dict[str, dict] = {
             "degauss": 0.01,
         },
         "default_resources": {"cores": 4, "memory_gb": 8, "walltime_minutes": 60},
+        "is_active": True,
+        "is_public": True,
+    },
+    "dft_relax": {
+        "name": "dft_relax_default",
+        "display_name": "DFT variable-cell relax (Quantum Espresso)",
+        "description": "Auto-created template for QE vc-relax runs.",
+        "engine": "qe",
+        "category": "relax",
+        "default_parameters": {
+            "calculation": "vc-relax",
+            "occupations": "smearing",
+            "smearing": "gauss",
+            "degauss": 0.01,
+            "forc_conv_thr": 1.0e-4,
+            "press_conv_thr": 0.5,
+        },
+        "default_resources": {"cores": 4, "memory_gb": 8, "walltime_minutes": 120},
+        "is_active": True,
+        "is_public": True,
+    },
+    "dft_bands": {
+        "name": "dft_bands_default",
+        "display_name": "DFT band structure (Quantum Espresso)",
+        "description": "Auto-created template for QE bands runs.",
+        "engine": "qe",
+        "category": "bands",
+        "default_parameters": {
+            "calculation": "bands",
+            "occupations": "smearing",
+            "smearing": "gauss",
+            "degauss": 0.01,
+        },
+        "default_resources": {"cores": 4, "memory_gb": 8, "walltime_minutes": 120},
+        "is_active": True,
+        "is_public": True,
+    },
+    "dft_dos": {
+        "name": "dft_dos_default",
+        "display_name": "DFT DOS (Quantum Espresso + dos.x)",
+        "description": "Auto-created template for scf + dos.x runs.",
+        "engine": "qe",
+        "category": "dos",
+        "default_parameters": {
+            "calculation": "scf",
+            "occupations": "smearing",
+            "smearing": "gauss",
+            "degauss": 0.01,
+            "dos_delta_e_ev": 0.01,
+            "dos_emin_ev": -20.0,
+            "dos_emax_ev": 20.0,
+        },
+        "default_resources": {"cores": 4, "memory_gb": 8, "walltime_minutes": 60},
+        "is_active": True,
+        "is_public": True,
+    },
+    "dft_phonons_gamma": {
+        "name": "dft_phonons_gamma_default",
+        "display_name": "DFT phonons at Γ (Quantum Espresso + ph.x)",
+        "description": "Auto-created template for scf + ph.x Γ-only runs.",
+        "engine": "qe",
+        "category": "phonons",
+        "default_parameters": {
+            "calculation": "scf",
+            "occupations": "smearing",
+            "smearing": "gauss",
+            "degauss": 0.01,
+            "tr2_ph": 1.0e-14,
+        },
+        "default_resources": {"cores": 4, "memory_gb": 8, "walltime_minutes": 180},
         "is_active": True,
         "is_public": True,
     },

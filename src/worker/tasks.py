@@ -24,7 +24,7 @@ import os
 import tempfile
 import json
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any, Callable, Dict, Optional
 from pathlib import Path
 
 from celery import Task
@@ -1300,6 +1300,464 @@ def run_dft_static_job(self, job_id: str) -> Dict[str, Any]:
             engine.dispose()
         except Exception:  # noqa: BLE001
             pass
+
+
+# ---------------------------------------------------------------------------
+# Shared DFT helper — Session 3.3
+# ---------------------------------------------------------------------------
+
+
+def _run_pw_step(
+    self,
+    job_id: str,
+    *,
+    kind: str,
+    calculation: str,
+    prior_pw_run: Optional[str] = None,
+    post_pw: Optional[Callable] = None,
+    extra_param_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Shared body for all four QE workflow kinds.
+
+    ``calculation`` drives the pw.x run (scf / vc-relax / bands / nscf).
+    ``prior_pw_run`` — when a previous step needs to be chained (e.g.
+    bands relies on the upstream scf's outdir), the caller resolves a
+    step-id-to-outdir mapping here by reading
+    ``job.parameters["_upstream"]`` written by the workflow tick.
+    Unused in Session 3.3's initial cut since Celery tasks each own
+    their own run dir; the workflow executor will feed outputs via the
+    ``{"uses": ...}`` resolver.
+
+    ``post_pw(run_dir, registry, pw_result, session, job) -> dict`` is
+    called after pw.x completes successfully; its return value is
+    merged into ``lc.outputs``. DOS and phonon tasks use it to invoke
+    the follow-up binary.
+    """
+    import os
+    from pathlib import Path
+
+    from backend.common.engines.qe_input import (
+        PseudopotentialRegistry,
+        QEInputParams,
+        generate_pw_input,
+    )
+    from backend.common.engines.qe_run import run_pw
+    from backend.common.jobs import (
+        DEFAULT_ARTIFACTS_BUCKET,
+        build_minio_client,
+        ensure_bucket,
+    )
+    from backend.common.workers import (
+        ArtifactBundle,
+        JobLifecycle,
+        build_run_dir,
+        tar_and_upload_run_dir,
+    )
+    from backend.common.workers.events import RedisPubSubEmitter
+
+    engine, Session = _sync_session_for_worker()
+    minio_client = None
+    try:
+        try:
+            minio_client = build_minio_client()
+            ensure_bucket(minio_client, DEFAULT_ARTIFACTS_BUCKET)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s: MinIO setup failed: %s", kind, exc)
+            minio_client = None
+
+        emitter = RedisPubSubEmitter()
+
+        with Session() as session:
+            with JobLifecycle(
+                job_id, session=session, emitter=emitter, worker_id=self.request.id,
+            ) as lc:
+                assert lc.job is not None
+                structure_id = lc.job.structure_id  # type: ignore[attr-defined]
+                parameters = lc.job.parameters or {}  # type: ignore[attr-defined]
+
+                qe_struct = _load_structure_for_qe(session, structure_id)
+                pseudo_dir = os.getenv(
+                    "QE_PSEUDO_DIR",
+                    str(Path.home() / "orion" / "pseudos" / "SSSP_1.3.0_PBE_efficiency"),
+                )
+                registry = PseudopotentialRegistry(pseudo_dir)
+
+                # Filter down to valid QEInputParams fields; extras go
+                # through extra_control etc when the caller knows what
+                # they're doing.
+                qe_params_dict = {
+                    k: v for k, v in parameters.items()
+                    if k in QEInputParams.model_fields
+                }
+                qe_params_dict["calculation"] = calculation
+                if extra_param_overrides:
+                    qe_params_dict.update(extra_param_overrides)
+                qe_input_params = QEInputParams(**qe_params_dict)
+
+                rendered = generate_pw_input(qe_struct, qe_input_params, registry)
+                run_dir = build_run_dir(str(job_id))
+                pw_executable = os.getenv("QE_EXECUTABLE", "pw.x")
+                walltime = int(parameters.get("walltime_minutes", 60))
+                cpus = int(parameters.get("cpus", 1))
+
+                run_result = run_pw(
+                    rendered,
+                    run_dir,
+                    qe_executable=pw_executable,
+                    pseudo_src_dir=registry.pseudo_dir,
+                    cpus=cpus,
+                    walltime_minutes=walltime,
+                    species_hint=qe_struct["species"],
+                )
+                if not run_result.success:
+                    raise RuntimeError(
+                        f"{kind} pw.x stage={run_result.stage}: {run_result.error_message}"
+                    )
+
+                outputs: Dict[str, Any] = run_result.output.as_dict()
+                if post_pw is not None:
+                    extra_outputs = post_pw(
+                        run_dir=run_dir,
+                        registry=registry,
+                        pw_result=run_result,
+                        params=parameters,
+                        lc=lc,
+                        session=session,
+                    )
+                    if extra_outputs:
+                        outputs.update(extra_outputs)
+
+                bundle = ArtifactBundle(
+                    run_dir=run_dir,
+                    job_id=str(job_id),
+                    manifest={
+                        "engine": "qe",
+                        "kind": kind,
+                        "calculation": calculation,
+                        "ecutwfc_ry": rendered.ecutwfc_ry,
+                        "ecutrho_ry": rendered.ecutrho_ry,
+                        "kpoints": [
+                            rendered.kpoints.nk1, rendered.kpoints.nk2, rendered.kpoints.nk3,
+                        ],
+                    },
+                )
+                upload = tar_and_upload_run_dir(
+                    bundle, minio_client=minio_client, bucket=DEFAULT_ARTIFACTS_BUCKET,
+                )
+                extra = dict(getattr(lc.job, "extra_metadata", None) or {})
+                extra["artifact"] = {
+                    "bucket": upload["bucket"],
+                    "key": upload["key"],
+                    "tarball": upload["tarball"],
+                    "size_bytes": upload["size_bytes"],
+                    "uploaded": upload["uploaded"],
+                }
+                lc.job.extra_metadata = extra  # type: ignore[attr-defined]
+
+                lc.outputs = outputs
+
+        return {
+            "job_id": job_id,
+            "status": "success",
+            "kind": kind,
+            "artifact_key": upload["key"],
+            "energy_ev": (
+                run_result.output.energy.total_ev if run_result.output.energy else None
+            ),
+        }
+    finally:
+        try:
+            engine.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _run_secondary_binary(
+    run_dir: Path, executable: str, input_name: str, input_text: str,
+    *,
+    walltime_minutes: int = 30, cpus: int = 1,
+) -> "PWRunResult":
+    """Invoke a secondary QE binary (dos.x / ph.x) in an existing run_dir.
+
+    Uses Session 2.3's execution backend so the same cancel / walltime
+    machinery applies. The input file is written relative to ``run_dir``
+    and the binary is expected to read ``prefix.save/`` that pw.x left.
+    """
+    from backend.common.engines.qe_run.runner import PWRunResult
+    from backend.common.engines.qe_run.output import parse_pw_output
+    from backend.common.execution import (
+        JobState,
+        Resources,
+        get_execution_backend,
+        sync_execute,
+    )
+
+    input_path = run_dir / input_name
+    input_path.write_text(input_text)
+    stdout_path = run_dir / f"{input_name}.stdout"
+    stderr_path = run_dir / f"{input_name}.stderr"
+
+    backend = get_execution_backend("local")
+    # We pipe stdin to pw.x-style binaries via the subprocess stdin; the
+    # canonical way for dos.x / ph.x is to pass the input on the
+    # command line with "-i <input>" if they support it, else via stdin.
+    # Both dos.x and ph.x accept -inp; use it.
+    state = sync_execute(
+        backend,
+        [executable, "-inp", str(input_path)],
+        run_dir,
+        Resources(cpus=cpus, walltime_minutes=walltime_minutes),
+        poll_interval_seconds=0.5,
+    )
+    # sync_execute wrote stdout.txt/stderr.txt in run_dir; rename so
+    # subsequent binary calls don't overwrite.
+    default_stdout = run_dir / "stdout.txt"
+    default_stderr = run_dir / "stderr.txt"
+    if default_stdout.exists():
+        default_stdout.replace(stdout_path)
+    if default_stderr.exists():
+        default_stderr.replace(stderr_path)
+
+    text = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
+    # We don't use parse_pw_output here — pw output parser wouldn't
+    # find most fields. But we re-use its error detection for ERRORED.
+    # For now return a shallow result; tasks below reparse stdout
+    # for the kind-specific info they care about.
+    success = state == JobState.COMPLETED
+    return PWRunResult(
+        run_dir=run_dir,
+        input_path=input_path,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        output=None,  # secondary binaries have their own parsers
+        returncode=0 if success else 1,
+        success=success,
+        stage="ok" if success else "nonzero_exit",
+        error_message=None if success else f"{executable} state={state.value}",
+        extra={"stdout_text": text},
+    )
+
+
+# ---------------------------------------------------------------------------
+# orion.dft.relax — vc-relax and persist relaxed geometry
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="orion.dft.relax", bind=True, acks_late=True)
+def run_dft_relax_job(self, job_id: str) -> Dict[str, Any]:
+    """Full vc-relax: lattice + positions relaxed to forces < forc_conv_thr.
+
+    Outputs include the relaxed structure block, which downstream
+    workflow steps consume via ``{"uses": "step.outputs.relaxed.lattice_ang"}``.
+    """
+    return _run_pw_step(
+        self, job_id,
+        kind="dft_relax",
+        calculation="vc-relax",
+    )
+
+
+# ---------------------------------------------------------------------------
+# orion.dft.bands — non-SCF along a k-path
+# ---------------------------------------------------------------------------
+
+
+def _bands_post_pw(*, run_dir, registry, pw_result, params, lc, session):
+    """Write band_structure.json in the run_dir + populate a minimal
+    pymatgen-compatible dict on the job outputs.
+
+    Doesn't invoke a separate binary; pw.x in ``calculation=bands``
+    already did the work.
+    """
+    import json
+
+    if pw_result.output is None or pw_result.output.bands is None:
+        return {}
+    bands_dict = pw_result.output.as_dict().get("bands", {})
+    (run_dir / "band_structure.json").write_text(
+        json.dumps(bands_dict, indent=2, default=str)
+    )
+    return {"band_structure_json": "band_structure.json"}
+
+
+@celery_app.task(name="orion.dft.bands", bind=True, acks_late=True)
+def run_dft_bands_job(self, job_id: str) -> Dict[str, Any]:
+    """Run pw.x in ``calculation='bands'`` along the caller's k-path.
+
+    The workflow template is expected to have set ``parameters.kpoints``
+    to a Monkhorst-Pack dense grid OR left it None (SSSP default) —
+    for real bands calculations, the workflow template pushes a list
+    of k-points on a high-symmetry path, but that requires pw.x's
+    ``K_POINTS crystal_b`` block which QEInputParams doesn't yet
+    expose. Session 3.3 ships the task wiring + uses uniform kpoints
+    as a placeholder; proper k-path comes in a follow-up that adds a
+    kpath field to QEInputParams.
+    """
+    return _run_pw_step(
+        self, job_id,
+        kind="dft_bands",
+        calculation="bands",
+        post_pw=_bands_post_pw,
+    )
+
+
+# ---------------------------------------------------------------------------
+# orion.dft.dos — scf + dos.x with delta_e=0.01 eV
+# ---------------------------------------------------------------------------
+
+
+def _dos_post_pw(*, run_dir, registry, pw_result, params, lc, session):
+    """Run dos.x after a successful scf and persist DOS data.
+
+    Writes dos.csv to the run_dir and records VBM/CBM/bandgap onto
+    outputs so workflow resolvers can pull them.
+    """
+    from backend.common.engines.qe_run import parse_dos_output
+    import csv
+    import os
+
+    prefix = params.get("prefix") or "orion"
+    delta_e_ev = float(params.get("dos_delta_e_ev", 0.01))
+    emin = params.get("dos_emin_ev", "-20.0")
+    emax = params.get("dos_emax_ev", "20.0")
+    dos_executable = os.getenv("QE_DOS_EXECUTABLE", "dos.x")
+
+    # dos.x input: reads pwscf outdir + prefix, writes <prefix>.dos.
+    dos_in = (
+        f"&DOS\n"
+        f"  prefix = '{prefix}'\n"
+        f"  outdir = './tmp'\n"
+        f"  fildos = '{prefix}.dos'\n"
+        f"  Emin = {emin}\n"
+        f"  Emax = {emax}\n"
+        f"  DeltaE = {delta_e_ev}\n"
+        f"/\n"
+    )
+    result = _run_secondary_binary(
+        run_dir, dos_executable, "dos.in", dos_in,
+        walltime_minutes=int(params.get("walltime_minutes", 30)),
+        cpus=int(params.get("cpus", 1)),
+    )
+    if not result.success:
+        raise RuntimeError(f"dos.x failed: {result.error_message}")
+
+    dos_path = run_dir / f"{prefix}.dos"
+    parsed = parse_dos_output(dos_path)
+
+    csv_path = run_dir / "dos.csv"
+    with csv_path.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["E_eV", "DOS", "IntegratedDOS"])
+        for e, d, i in zip(parsed.energies_ev, parsed.dos, parsed.idos):
+            w.writerow([e, d, i])
+
+    # VBM / CBM / bandgap
+    vbm, cbm = _estimate_vbm_cbm(parsed)
+    bandgap_ev = None if vbm is None or cbm is None else max(0.0, cbm - vbm)
+
+    return {
+        "dos_csv": "dos.csv",
+        "fermi_energy_ev": parsed.fermi_energy_ev,
+        "vbm_ev": vbm,
+        "cbm_ev": cbm,
+        "bandgap_ev": bandgap_ev,
+        "dos_n_points": len(parsed.energies_ev),
+    }
+
+
+def _estimate_vbm_cbm(dos) -> tuple[Optional[float], Optional[float]]:
+    """Rough VBM/CBM from a DOS + integrated DOS around E_F.
+
+    VBM = highest energy with DOS > threshold below E_F;
+    CBM = lowest energy with DOS > threshold above E_F.
+    Threshold is 1% of the max DOS value — coarse but good enough for
+    semiconductor screening. Metals return ``(None, None)`` by design.
+    """
+    if not dos.energies_ev or dos.fermi_energy_ev is None:
+        return None, None
+    ef = dos.fermi_energy_ev
+    max_dos = max(dos.dos) if dos.dos else 0.0
+    if max_dos <= 0:
+        return None, None
+    thr = 0.01 * max_dos
+
+    vbm = None
+    for e, d in zip(dos.energies_ev, dos.dos):
+        if e <= ef and d > thr:
+            vbm = e
+    cbm = None
+    for e, d in zip(dos.energies_ev, dos.dos):
+        if e > ef and d > thr:
+            cbm = e
+            break
+    # If VBM and CBM are both at Fermi (metal), call it no-gap.
+    if vbm is not None and cbm is not None and cbm - vbm < 0.05:
+        return None, None
+    return vbm, cbm
+
+
+@celery_app.task(name="orion.dft.dos", bind=True, acks_late=True)
+def run_dft_dos_job(self, job_id: str) -> Dict[str, Any]:
+    """SCF + dos.x post-processing."""
+    return _run_pw_step(
+        self, job_id,
+        kind="dft_dos",
+        calculation="scf",
+        post_pw=_dos_post_pw,
+    )
+
+
+# ---------------------------------------------------------------------------
+# orion.dft.phonons_gamma — scf + ph.x at Γ
+# ---------------------------------------------------------------------------
+
+
+def _phonons_gamma_post_pw(*, run_dir, registry, pw_result, params, lc, session):
+    """Run ph.x at Γ after a successful scf and extract mode frequencies."""
+    from backend.common.engines.qe_run import parse_ph_output
+    import os
+
+    prefix = params.get("prefix") or "orion"
+    ph_executable = os.getenv("QE_PH_EXECUTABLE", "ph.x")
+    tr2_ph = params.get("tr2_ph", "1.0d-14")
+
+    ph_in = (
+        f"Phonons at Gamma\n"
+        f" &inputph\n"
+        f"   tr2_ph = {tr2_ph}\n"
+        f"   prefix = '{prefix}'\n"
+        f"   outdir = './tmp'\n"
+        f"   fildyn = '{prefix}.dynG'\n"
+        f"   ldisp = .false.\n"
+        f" /\n"
+        f"0.0 0.0 0.0\n"
+    )
+    result = _run_secondary_binary(
+        run_dir, ph_executable, "ph.in", ph_in,
+        walltime_minutes=int(params.get("walltime_minutes", 60)),
+        cpus=int(params.get("cpus", 1)),
+    )
+    if not result.success:
+        raise RuntimeError(f"ph.x failed: {result.error_message}")
+
+    parsed = parse_ph_output(result.stdout_path)
+    return {
+        "phonon_frequencies_cm1": parsed.frequencies_cm1,
+        "phonon_frequencies_thz": parsed.frequencies_thz,
+        "phonon_n_modes": len(parsed.frequencies_cm1),
+        "phonon_n_imaginary": parsed.n_imaginary,
+    }
+
+
+@celery_app.task(name="orion.dft.phonons_gamma", bind=True, acks_late=True)
+def run_dft_phonons_gamma_job(self, job_id: str) -> Dict[str, Any]:
+    """SCF + ph.x Γ-only phonon calculation."""
+    return _run_pw_step(
+        self, job_id,
+        kind="dft_phonons_gamma",
+        calculation="scf",
+        post_pw=_phonons_gamma_post_pw,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -24,7 +24,11 @@ logger = logging.getLogger(__name__)
 # avoid cyclic imports. When Phase 3 adds DFT kinds, extend both.
 _KIND_TO_TASK: Dict[str, str] = {
     "mock_static": "orion.mock.static",
-    "dft_static": "orion.dft.static",   # Session 3.2
+    "dft_static": "orion.dft.static",          # Session 3.2
+    "dft_relax": "orion.dft.relax",            # Session 3.3
+    "dft_bands": "orion.dft.bands",            # Session 3.3
+    "dft_dos": "orion.dft.dos",                # Session 3.3
+    "dft_phonons_gamma": "orion.dft.phonons_gamma",   # Session 3.3
 }
 
 

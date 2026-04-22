@@ -15,25 +15,39 @@ Design boundary
 """
 
 from .output import (
+    BandKpoint,
     ConvergenceStatus,
+    ParsedBands,
+    ParsedDOS,
     ParsedEnergy,
     ParsedForce,
+    ParsedPhononsGamma,
     ParsedStress,
     PWOutput,
     PWOutputParseError,
+    RelaxedStructure,
+    parse_dos_output,
+    parse_ph_output,
     parse_pw_output,
 )
 from .runner import PWRunError, PWRunResult, run_pw
 
 __all__ = [
+    "BandKpoint",
     "ConvergenceStatus",
+    "ParsedBands",
+    "ParsedDOS",
     "ParsedEnergy",
     "ParsedForce",
+    "ParsedPhononsGamma",
     "ParsedStress",
     "PWOutput",
     "PWOutputParseError",
     "PWRunError",
     "PWRunResult",
+    "RelaxedStructure",
+    "parse_dos_output",
+    "parse_ph_output",
     "parse_pw_output",
     "run_pw",
 ]

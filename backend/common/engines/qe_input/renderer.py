@@ -224,8 +224,7 @@ def generate_pw_input(
     lines.append(f"  tprnfor = .{str(params.tforces).lower()}.")
     if params.calculation in ("relax", "vc-relax", "md"):
         lines.append(f"  forc_conv_thr = {_fortran_float(params.forc_conv_thr)}")
-    if params.calculation == "vc-relax":
-        lines.append(f"  press_conv_thr = {params.press_conv_thr}")
+    # press_conv_thr belongs in &CELL, not &CONTROL — emitted below.
     for k, v in params.extra_control.items():
         lines.append(f"  {k} = {_fortran_value(v)}")
     lines.append("/")
@@ -274,6 +273,7 @@ def generate_pw_input(
     if params.calculation == "vc-relax":
         lines.append("&CELL")
         lines.append("  cell_dynamics = 'bfgs'")
+        lines.append(f"  press_conv_thr = {params.press_conv_thr}")
         lines.append("/")
         lines.append("")
 
