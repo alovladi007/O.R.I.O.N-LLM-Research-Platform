@@ -16,6 +16,7 @@ transformers>=4.30.0
 scikit-learn>=1.3.0
 scikit-fem>=12.0.0                 # Phase 5 / Session 5.1 FEM continuum solver
 meshio>=5.3.0                      # VTU / .msh IO for continuum solver
+matminer>=0.9.0                    # Phase 6 / Session 6.1 ML featurizers (composition + SiteStatsFingerprint)
 xgboost>=2.0.0
 
 # Database and storage (Neo4j removed in Session 0.2 with the legacy
