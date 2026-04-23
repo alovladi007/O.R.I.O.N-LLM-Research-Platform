@@ -377,6 +377,88 @@ async def submit_md_template(
     return WorkflowRunResponse.model_validate(loaded)
 
 
+@router.post(
+    "/templates/multiscale/{template_name}",
+    response_model=WorkflowRunResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit a pre-built multiscale workflow (Session 5.3)",
+    description=(
+        "Sequential multiscale (DFT → MD → continuum) templates from "
+        "`backend.common.workflows.templates.multiscale`. Session 5.3 "
+        "ships `dft_to_md_to_continuum` as a scaffolded DAG — the three "
+        "step kinds (`dft_elastic`, `md_green_kubo_thermal`, "
+        "`continuum_thermomechanical`) raise PendingAnalyzerError at "
+        "execution. Submissions are accepted; failure is loud at "
+        "the first scheduled task."
+    ),
+)
+async def submit_multiscale_template(
+    template_name: str,
+    structure_id: uuid.UUID = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> WorkflowRunResponse:
+    if not current_user.can_run_simulations():
+        raise AuthorizationError("You don't have permission to run workflows")
+
+    from backend.common.workflows.templates.multiscale import SPEC_BUILDERS
+
+    builder = SPEC_BUILDERS.get(template_name)
+    if builder is None:
+        raise ValidationError(
+            f"Unknown multiscale template {template_name!r}",
+            details={"known": sorted(SPEC_BUILDERS)},
+        )
+
+    from ..models import Structure
+
+    structure = await db.get(Structure, structure_id)
+    if structure is None:
+        raise NotFoundError("Structure", structure_id)
+
+    spec = builder(str(structure_id))
+    from backend.common.workflows import expand_foreach, toposort_steps
+
+    expanded = expand_foreach(spec)
+    toposort_steps(expanded)
+
+    run = WorkflowRun(
+        owner_id=current_user.id,
+        name=expanded.name,
+        description=expanded.description,
+        status=WorkflowRunStatus.PENDING.value,
+        spec=expanded.model_dump(),
+    )
+    db.add(run)
+    await db.flush()
+
+    topo_idx = {sid: i for i, sid in enumerate([s.id for s in expanded.steps])}
+    for step in expanded.steps:
+        db.add(
+            WorkflowRunStep(
+                workflow_run_id=run.id,
+                step_id=step.id,
+                kind=step.kind,
+                status=WorkflowStepStatus.PENDING.value,
+                topo_index=topo_idx[step.id],
+                spec=step.model_dump(),
+            )
+        )
+    await db.commit()
+
+    try:
+        from src.worker.celery_app import celery_app
+
+        celery_app.send_task("orion.workflows.tick")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "multiscale template submit: could not kick workflow tick: %s", exc,
+        )
+
+    loaded = await _reload_run_with_steps(db, run.id)
+    return WorkflowRunResponse.model_validate(loaded)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

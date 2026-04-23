@@ -1,8 +1,9 @@
 """Reusable workflow DAG templates.
 
-Organized by namespace: ``qe`` (Phase 3) and ``md`` (Phase 4).
-The router endpoint ``POST /api/v1/workflow-runs/templates/{ns}/{name}``
-looks up the builder via the ``SPEC_BUILDERS`` dict on each module.
+Organized by namespace: ``qe`` (Phase 3), ``md`` (Phase 4),
+``multiscale`` (Phase 5 / Session 5.3). The router endpoint
+``POST /api/v1/workflow-runs/templates/{ns}/{name}`` looks up the
+builder via the ``SPEC_BUILDERS`` dict on each module.
 """
 
 from .md import (
@@ -11,6 +12,7 @@ from .md import (
     equilibrate_nvt_then_nve_spec,
     melting_curve_spec,
 )
+from .multiscale import dft_to_md_to_continuum_spec
 from .qe import (
     band_structure_spec,
     dos_spec,
@@ -20,6 +22,7 @@ from .qe import (
 
 __all__ = [
     "band_structure_spec",
+    "dft_to_md_to_continuum_spec",
     "diffusivity_vs_t_spec",
     "dos_spec",
     "elastic_constants_via_strain_spec",

@@ -31,6 +31,16 @@ from .md import (
     detect_melting_point,
     fit_elastic_constants,
 )
+from .multiscale import (
+    MultiscaleReport,
+    ProvenanceLink,
+    STEP_ID_CONTINUUM,
+    STEP_ID_DFT_ELASTIC,
+    STEP_ID_MD_THERMAL,
+    build_multiscale_report,
+    extract_dft_elastic_tensor,
+    extract_md_thermal_conductivity,
+)
 
 __all__ = [
     "AnalyzerInputError",
@@ -38,8 +48,16 @@ __all__ = [
     "ElasticConstantsReport",
     "MDReport",
     "MeltingCurveReport",
+    "MultiscaleReport",
     "PendingAnalyzerError",
+    "ProvenanceLink",
+    "STEP_ID_CONTINUUM",
+    "STEP_ID_DFT_ELASTIC",
+    "STEP_ID_MD_THERMAL",
     "arrhenius_fit",
+    "build_multiscale_report",
     "detect_melting_point",
+    "extract_dft_elastic_tensor",
+    "extract_md_thermal_conductivity",
     "fit_elastic_constants",
 ]

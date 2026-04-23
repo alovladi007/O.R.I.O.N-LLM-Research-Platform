@@ -32,6 +32,15 @@ _KIND_TO_TASK: Dict[str, str] = {
     "dft_bands": "orion.dft.bands",            # Session 3.3
     "dft_dos": "orion.dft.dos",                # Session 3.3
     "dft_phonons_gamma": "orion.dft.phonons_gamma",   # Session 3.3
+    # Session 5.3 deferred tasks. Each raises PendingAnalyzerError at
+    # run time with a tracker hint pointing at the phase that will
+    # ship the real implementation. Registered here so the
+    # `dft_to_md_to_continuum` template DAG toposorts + dispatches
+    # cleanly (failure is loud at the first scheduled task, not
+    # silent at spec-validation time).
+    "dft_elastic": "orion.dft.elastic",                    # Phase 8
+    "md_green_kubo_thermal": "orion.md.green_kubo_thermal",  # Phase 4 follow-up
+    "continuum_thermomechanical": "orion.continuum.thermomechanical",  # Session 5.3b
 }
 
 

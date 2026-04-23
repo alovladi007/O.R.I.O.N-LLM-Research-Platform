@@ -2073,6 +2073,100 @@ def run_md_npt_job(self, job_id: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Session 5.3 — multiscale scaffolded tasks (loud PendingAnalyzerError)
+# ---------------------------------------------------------------------------
+
+
+def _raise_pending(job_id: str, kind: str, analyzer: str, tracker: str) -> None:
+    """Mark the job FAILED with a PendingAnalyzerError and re-raise.
+
+    The workflow tick propagates the FAILED state upward so the
+    parent ``WorkflowRun`` also fails loudly. We keep the bookkeeping
+    inline here rather than reusing ``_run_lammps_step`` because the
+    full LAMMPS lifecycle (MinIO tarball, JobLifecycle with live
+    metrics) isn't meaningful for a task that runs zero lines of
+    physics.
+    """
+    from backend.common.reports import PendingAnalyzerError
+    from backend.common.workers import JobLifecycle
+    from backend.common.workers.events import RedisPubSubEmitter
+
+    engine, Session = _sync_session_for_worker()
+    try:
+        with Session() as session:
+            try:
+                lc = JobLifecycle(
+                    job_id,
+                    session=session,
+                    emitter=RedisPubSubEmitter(),
+                    worker_id=None,
+                )
+                lc.__enter__()
+            except Exception:  # noqa: BLE001
+                # Even if the bookkeeping fails, raise the pending
+                # error so the workflow tick sees the step failed.
+                raise PendingAnalyzerError(analyzer, tracker=tracker)
+            try:
+                raise PendingAnalyzerError(analyzer, tracker=tracker)
+            finally:
+                lc.__exit__(*([None] * 3))  # the raise above bubbles up
+    finally:
+        try:
+            engine.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@celery_app.task(name="orion.dft.elastic", bind=True, acks_late=True)
+def run_dft_elastic_job(self, job_id: str) -> Dict[str, Any]:
+    """DFT elastic-tensor scaffolded task. Deferred to Phase 8.
+
+    Raises :class:`~backend.common.reports.PendingAnalyzerError`. The
+    multiscale DAG (``dft_to_md_to_continuum``) wires this in so
+    submissions fail loudly at execution; Phase 8 will replace this
+    with a real ±ε strain DFT sub-workflow + C_ij fit.
+    """
+    _raise_pending(
+        job_id,
+        kind="dft_elastic",
+        analyzer="dft_elastic (elastic tensor via ±ε strain DFT)",
+        tracker="Phase 8",
+    )
+
+
+@celery_app.task(name="orion.md.green_kubo_thermal", bind=True, acks_late=True)
+def run_md_green_kubo_thermal_job(self, job_id: str) -> Dict[str, Any]:
+    """MD Green-Kubo thermal-conductivity scaffolded task.
+
+    Deferred to the Phase 4 Green-Kubo follow-up (flagged in the
+    Phase 4.2 report alongside VACF→vDOS).
+    """
+    _raise_pending(
+        job_id,
+        kind="md_green_kubo_thermal",
+        analyzer="md_green_kubo_thermal (κ from heat-flux ACF)",
+        tracker="Phase 4 follow-up",
+    )
+
+
+@celery_app.task(name="orion.continuum.thermomechanical", bind=True, acks_late=True)
+def run_continuum_thermomechanical_job(self, job_id: str) -> Dict[str, Any]:
+    """Thermomechanical FEM scaffolded task (Session 5.3b).
+
+    The linear elasticity + steady heat solvers exist (Session 5.1);
+    the coupled thermoelastic ``σ = C:ε − α·ΔT·I`` run would combine
+    them with the upstream C_ij (Phase 8) and κ (Phase 4 follow-up).
+    Until both land, running this task raises PendingAnalyzerError.
+    """
+    _raise_pending(
+        job_id,
+        kind="continuum_thermomechanical",
+        analyzer="continuum_thermomechanical (thermoelastic FEM)",
+        tracker="Session 5.3b (depends on Phase 8 + Phase 4 follow-up)",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Workflow tick — Session 2.4
 # ---------------------------------------------------------------------------
 

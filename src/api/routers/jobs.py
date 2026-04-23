@@ -776,6 +776,13 @@ _DISPATCH_TASKS: dict[str, str] = {
     "dft_bands": "orion.dft.bands",            # Session 3.3
     "dft_dos": "orion.dft.dos",                # Session 3.3
     "dft_phonons_gamma": "orion.dft.phonons_gamma",   # Session 3.3
+    # Session 5.3 scaffolded tasks — raise PendingAnalyzerError at
+    # run time, documented in the session report. Registered so the
+    # `dft_to_md_to_continuum` DAG dispatches cleanly (loud failure
+    # at execution, not silent at validation).
+    "dft_elastic": "orion.dft.elastic",                       # Phase 8
+    "md_green_kubo_thermal": "orion.md.green_kubo_thermal",    # Phase 4 follow-up
+    "continuum_thermomechanical": "orion.continuum.thermomechanical",  # Session 5.3b
 }
 
 # Built-in workflow templates, materialized lazily so the mock dispatch
@@ -930,6 +937,63 @@ _BUILTIN_TEMPLATES: dict[str, dict] = {
             "tr2_ph": 1.0e-14,
         },
         "default_resources": {"cores": 4, "memory_gb": 8, "walltime_minutes": 180},
+        "is_active": True,
+        "is_public": True,
+    },
+    # Session 5.3 deferred builtins. These let the multiscale DAG
+    # dispatch cleanly so the 5.3 acceptance test (submit + fail loud
+    # at exec) works without hand-wiring templates. Tasks raise
+    # PendingAnalyzerError so real runs fail loudly.
+    "dft_elastic": {
+        "name": "dft_elastic_default",
+        "display_name": "DFT elastic tensor (Phase 8, scaffolded)",
+        "description": (
+            "Scaffolded template for the Phase 8 DFT elastic-tensor "
+            "workflow. The Celery task raises PendingAnalyzerError; "
+            "the DAG is wired so submissions fail loudly at execution "
+            "rather than at validation."
+        ),
+        "engine": "qe",
+        "category": "elastic",
+        "default_parameters": {"strain_magnitude": 0.005},
+        "default_resources": {"cores": 4, "memory_gb": 8, "walltime_minutes": 180},
+        "is_active": True,
+        "is_public": True,
+    },
+    "md_green_kubo_thermal": {
+        "name": "md_green_kubo_thermal_default",
+        "display_name": "MD Green-Kubo thermal conductivity (Phase 4 follow-up, scaffolded)",
+        "description": (
+            "Scaffolded template for the MD Green-Kubo κ analyzer. "
+            "Deferred alongside VACF→vDOS. Celery task raises "
+            "PendingAnalyzerError until the analyzer ships."
+        ),
+        "engine": "lammps",
+        "category": "thermal",
+        "default_parameters": {
+            "temperature_k": 300.0,
+            "duration_ps": 200.0,
+        },
+        "default_resources": {"cores": 4, "memory_gb": 4, "walltime_minutes": 240},
+        "is_active": True,
+        "is_public": True,
+    },
+    "continuum_thermomechanical": {
+        "name": "continuum_thermomechanical_default",
+        "display_name": "Continuum thermomechanical FEM (scaffolded)",
+        "description": (
+            "Scaffolded template for the thermoelastic FEM solve that "
+            "consumes the upstream DFT C_ij + MD κ. Pending Session "
+            "5.3b; Celery task raises PendingAnalyzerError today."
+        ),
+        "engine": "skfem",
+        "category": "continuum",
+        "default_parameters": {
+            "length_x_m": 1.0e-3,
+            "length_y_m": 1.0e-3,
+            "length_z_m": 1.0e-3,
+        },
+        "default_resources": {"cores": 2, "memory_gb": 4, "walltime_minutes": 60},
         "is_active": True,
         "is_public": True,
     },
