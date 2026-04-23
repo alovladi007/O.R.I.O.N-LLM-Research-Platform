@@ -225,6 +225,10 @@ class TestInvariants:
 
 
 class TestAcceptanceDiffusion:
+    # ~6 s locally but GitHub's ubuntu-latest 2 vCPU runners routinely
+    # run Python-heavy workloads 3-5× slower; bump the per-test timeout
+    # so CI doesn't kill us at pytest.ini's 60 s default.
+    @pytest.mark.timeout(180)
     def test_vacancy_D_within_10_percent_of_analytical(self):
         """Roadmap acceptance: D = a² ν₀ exp(-E/kT) within 10%.
 
@@ -266,6 +270,10 @@ class TestAcceptanceDiffusion:
 
 
 class TestAcceptanceAnnihilation:
+    # Local runtime ~23 s (5 M-step kMC with occupancy-hash bookkeeping).
+    # CI's 2 vCPU runner can hit 60-90 s; 240 s gives comfortable headroom
+    # without masking a genuine regression (anything >4× local is a bug).
+    @pytest.mark.timeout(240)
     def test_pair_annihilation_drives_populations_below_threshold(self):
         """Roadmap acceptance: 1% V + 1% I decay to < 0.01%.
 
