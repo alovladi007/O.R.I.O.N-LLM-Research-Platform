@@ -1926,6 +1926,14 @@ def _run_lammps_step(
                     lammps_params_dict["ensemble"] = ensemble_override
                 params = LAMMPSInputParams(**lammps_params_dict)
 
+                # Session 4.3b: pick up step-marker fields that the MD
+                # workflow templates attach to drive aggregate analyzers.
+                # These live outside LAMMPSInputParams so they don't
+                # silently influence the rendered deck; they ride in the
+                # job parameters dict and get echoed into outputs below.
+                strain_voigt = parameters.get("strain_voigt")
+                strain_value = parameters.get("strain_value")
+
                 rendered = generate_lammps_input(
                     qe_struct, params, registry=default_registry,
                 )
@@ -1962,7 +1970,19 @@ def _run_lammps_step(
                     "final_thermo": (
                         run_result.log.final_values() if run_result.log else {}
                     ),
+                    # Session 4.3b: stamp the *target* T (from params)
+                    # so temperature-sweep analyzers (melting,
+                    # Arrhenius) can read it. The achieved T lives in
+                    # final_thermo.Temp.
+                    "temperature_k": params.temperature_k,
+                    "pressure_bar": (
+                        params.pressure_bar if params.ensemble == "npt" else None
+                    ),
                 }
+                if strain_voigt is not None:
+                    outputs["strain_voigt"] = strain_voigt
+                if strain_value is not None:
+                    outputs["strain_value"] = strain_value
                 if run_result.dump_paths:
                     frames = list(parse_lammps_dump(run_result.dump_paths[0]))
                     if frames:

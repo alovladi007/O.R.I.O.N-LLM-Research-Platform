@@ -1,0 +1,9 @@
+# Bundled potentials live in-tree only for the small, LAMMPS-
+# distributed Tersoff files (Si.tersoff, C.tersoff). EAM alloy
+# files are fetched on demand via scripts/orion_fetch_potentials.sh
+# and must NOT be committed — see LICENSE.txt in this directory
+# for the provenance policy.
+*.eam
+*.eam.alloy
+*.reax
+*.mace

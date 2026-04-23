@@ -235,6 +235,16 @@ def _build_default_specs() -> List[ForcefieldSpec]:
     # - Cu: Foiles, Baskes, Daw (1986) — Cu_u3.eam (single-element)
     # - Ni: Mishin et al. (1999) — Ni99_v2.eam.alloy
     # - Al: Mishin et al. (1999) — Al99_v2.eam.alloy
+    # LAMMPS has two EAM pair_styles with *different* pair_coeff syntax:
+    # - ``pair_style eam`` (single-element, legacy): ``pair_coeff * * file``
+    #   — no trailing element labels.
+    # - ``pair_style eam/alloy``: ``pair_coeff * * file E1 E2 ...`` — one
+    #   label per atom type, in data-file order.
+    # The renderer formats {elements} into the template either way; the
+    # template string differs per style so Cu_u3 (single-element) emits
+    # just the path while Ni99/Al99 (alloy) append ``Ni`` / ``Al``.
+    _SINGLE_EAM_TEMPLATE = "pair_coeff * * {potential_path}"
+    _ALLOY_EAM_TEMPLATE = "pair_coeff * * {potential_path} {elements}"
     for element, filename, style, citation in [
         (
             "Cu",
@@ -256,6 +266,7 @@ def _build_default_specs() -> List[ForcefieldSpec]:
         ),
     ]:
         path = POTENTIAL_DATA_DIR / filename
+        template = _ALLOY_EAM_TEMPLATE if style == "eam/alloy" else _SINGLE_EAM_TEMPLATE
         specs.append(
             ForcefieldSpec(
                 name=f"eam_{element.lower()}",
@@ -265,7 +276,7 @@ def _build_default_specs() -> List[ForcefieldSpec]:
                 timestep_fs_recommended=1.0,
                 units="metal",
                 pair_style_line=f"pair_style {style}",
-                pair_coeff_template="pair_coeff * * {potential_path} {elements}",
+                pair_coeff_template=template,
                 potential_file=filename,
                 citation=citation,
                 available=path.is_file(),
@@ -356,7 +367,12 @@ def _build_default_specs() -> List[ForcefieldSpec]:
             applicable_elements=frozenset(),
             matches_all=True,
             cutoff_angstrom=2.5,  # interpreted in reduced units
-            timestep_fs_recommended=5.0,  # reduced dt*=0.005 @ Ar-like scales
+            # LJ is dimensionless — the fs-named field is meaningless
+            # for this spec. Renderer ignores it and uses the dedicated
+            # ``timestep_lj_reduced`` field on LAMMPSInputParams instead
+            # (default 0.005). Kept as 0.005 here so the value still
+            # reflects the physics in case someone inspects the spec.
+            timestep_fs_recommended=0.005,
             units="lj",
             pair_style_line="pair_style lj/cut 2.5",
             pair_coeff_template="pair_coeff * * 1.0 1.0",

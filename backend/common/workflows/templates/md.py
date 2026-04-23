@@ -196,23 +196,6 @@ def diffusivity_vs_t_spec(
 # ---------------------------------------------------------------------------
 
 
-# Six independent strain directions for a 3D elastic tensor in Voigt
-# notation. Each entry is (id_suffix, voigt_index, signed_strain).
-# Session 4.3b's C_ij solver assembles the stress-vs-strain slopes.
-_ELASTIC_STRAINS: List[tuple[str, int, float]] = [
-    ("e11_plus", 0, +0.005),
-    ("e11_minus", 0, -0.005),
-    ("e22_plus", 1, +0.005),
-    ("e22_minus", 1, -0.005),
-    ("e33_plus", 2, +0.005),
-    ("e33_minus", 2, -0.005),
-    # Shear strains — skipped for MVP; cubic-system C_ij can be
-    # obtained from the three diagonal pairs + bulk modulus, so the
-    # shears aren't strictly required for the roadmap's "C11 within
-    # 15% of 108 GPa for Al" target.
-]
-
-
 def elastic_constants_via_strain_spec(
     structure_id: str,
     *,
@@ -220,25 +203,44 @@ def elastic_constants_via_strain_spec(
     temperature_k: float = 300.0,
     duration_ps: float = 10.0,
     timestep_fs: float = 1.0,
+    strain_magnitude: float = 0.005,
 ) -> WorkflowSpec:
     """Apply ±ε strains, measure stress → fit C_ij.
 
-    Ships six NVT runs, one per ±0.5% strain on each diagonal axis.
-    The C_ij post-fitter
-    (``backend.common.reports.md.fit_elastic_constants``) uses
-    Hooke's law σ = C ε to extract the diagonal elastic constants.
-    Currently raises NotImplementedError; lands in 4.3b.
+    Session 4.3b wiring:
+      - Each step's ``inputs.extra_commands`` carries the ``change_box``
+        directive produced by
+        :func:`backend.common.engines.lammps_input.strain_extra_commands`.
+      - ``inputs.thermo_columns`` is overridden with
+        :data:`~backend.common.engines.lammps_input.THERMO_COLUMNS_STRESS`
+        so the per-component pressure tensor lands in ``final_thermo``.
+      - ``inputs.strain_voigt`` + ``inputs.strain_value`` are stamped
+        so the MD runner can echo them into the step outputs
+        (``_run_lammps_step`` reads these before dispatch and attaches
+        them verbatim to ``outputs``).
 
-    Caveats documented in 4.3b:
-    - Strain application currently piggybacks on LAMMPS' ``change_box``
-      at the start of each MD run. That path isn't wired through
-      ``LAMMPSInputParams`` yet — users would need a custom
-      ``extra_commands`` block. Another 4.3b item.
-    - Shear (off-diagonal) strains aren't generated here; C_44 etc.
-      require full deformation workflow.
+    The C_ij post-fitter lives at
+    :func:`backend.common.reports.md.fit_elastic_constants` — now
+    implemented. Shear (off-diagonal) strains still aren't generated
+    here; ``C_44`` etc. require the triclinic deformation path which
+    a later session can add as a 9-step variant.
     """
+    from backend.common.engines.lammps_input import (
+        THERMO_COLUMNS_STRESS,
+        strain_extra_commands,
+    )
+
+    strains = [
+        ("e11_plus", 0, +strain_magnitude),
+        ("e11_minus", 0, -strain_magnitude),
+        ("e22_plus", 1, +strain_magnitude),
+        ("e22_minus", 1, -strain_magnitude),
+        ("e33_plus", 2, +strain_magnitude),
+        ("e33_minus", 2, -strain_magnitude),
+    ]
     steps: List[StepSpec] = []
-    for suffix, _voigt_idx, strain in _ELASTIC_STRAINS:
+    for suffix, voigt_idx, strain in strains:
+        extra = strain_extra_commands(voigt_idx, strain)
         steps.append(
             StepSpec(
                 id=f"strain_{suffix}",
@@ -251,18 +253,21 @@ def elastic_constants_via_strain_spec(
                     "duration_ps": duration_ps,
                     "thermo_every": 100,
                     "dump_every": 1000,
-                    # 4.3b will prepend a change_box command here. For
-                    # now this metadata flows into outputs as a marker.
-                    "_elastic_strain_voigt_index": _voigt_idx,
-                    "_elastic_strain_value": strain,
+                    "thermo_columns": THERMO_COLUMNS_STRESS,
+                    "extra_commands": extra,
+                    # Runner reads these and echoes them into outputs
+                    # so fit_elastic_constants can read them back.
+                    "strain_voigt": voigt_idx,
+                    "strain_value": strain,
                 },
             )
         )
     return WorkflowSpec(
         name=name or "elastic_constants_via_strain",
         description=(
-            "Six ±ε diagonal-strain MD runs. C_ij solver + change_box "
-            "prepend land in Session 4.3b."
+            f"Six ±ε={strain_magnitude:.3f} diagonal-strain MD runs "
+            f"(NVT Langevin, {duration_ps} ps each). σ=Cε fit yields "
+            "diagonal C_ii via backend.common.reports.fit_elastic_constants."
         ),
         steps=steps,
         default_structure_id=structure_id,

@@ -21,6 +21,7 @@ Design
 """
 
 from .md import (
+    AnalyzerInputError,
     ArrheniusReport,
     ElasticConstantsReport,
     MDReport,
@@ -32,6 +33,7 @@ from .md import (
 )
 
 __all__ = [
+    "AnalyzerInputError",
     "ArrheniusReport",
     "ElasticConstantsReport",
     "MDReport",

@@ -141,11 +141,11 @@ class TestElasticConstantsSpec:
         spec = elastic_constants_via_strain_spec(_STRUCT_ID)
         # ±ε on each of three diagonal axes = 6 steps total.
         assert len(spec.steps) == 6
-        # Each step carries the marker fields the future C_ij solver
-        # will read.
+        # 4.3b field names — same semantics, renamed to match the
+        # fit_elastic_constants analyzer's contract.
         for step in spec.steps:
-            assert "_elastic_strain_voigt_index" in step.inputs
-            assert "_elastic_strain_value" in step.inputs
+            assert "strain_voigt" in step.inputs
+            assert "strain_value" in step.inputs
 
     def test_strain_values_balanced(self):
         from backend.common.workflows.templates.md import (
@@ -153,9 +153,32 @@ class TestElasticConstantsSpec:
         )
 
         spec = elastic_constants_via_strain_spec(_STRUCT_ID)
-        strains = sorted(s.inputs["_elastic_strain_value"] for s in spec.steps)
+        strains = sorted(s.inputs["strain_value"] for s in spec.steps)
         # Three negative, three positive at the same magnitudes.
         assert strains == [-0.005, -0.005, -0.005, 0.005, 0.005, 0.005]
+
+    def test_emits_change_box_extra_commands(self):
+        """4.3b: each step carries ``change_box`` lines that apply its strain."""
+        from backend.common.workflows.templates.md import (
+            elastic_constants_via_strain_spec,
+        )
+
+        spec = elastic_constants_via_strain_spec(_STRUCT_ID)
+        for step in spec.steps:
+            extra = step.inputs.get("extra_commands")
+            assert extra is not None and isinstance(extra, list)
+            assert any("change_box" in line for line in extra)
+
+    def test_stress_thermo_columns_requested(self):
+        """4.3b: analyzer needs per-component stress → Pxx/Pyy/Pzz in thermo."""
+        from backend.common.engines.lammps_input import THERMO_COLUMNS_STRESS
+        from backend.common.workflows.templates.md import (
+            elastic_constants_via_strain_spec,
+        )
+
+        spec = elastic_constants_via_strain_spec(_STRUCT_ID)
+        for step in spec.steps:
+            assert step.inputs["thermo_columns"] == THERMO_COLUMNS_STRESS
 
 
 # ---------------------------------------------------------------------------
@@ -202,43 +225,43 @@ class TestMDReports:
         assert r.report_schema == "elastic_constants_report.v1"
 
 
-class TestDeferredAnalyzers:
-    """The Session 4.3a contract is: the runs work, the post-fitters
-    don't. PendingAnalyzerError is loud — never silent zeros.
+class TestAnalyzerStructuralFailures:
+    """Session 4.3a raised PendingAnalyzerError from the three aggregate
+    analyzers. Session 4.3b implements them — the raise-on-empty
+    contract moves to AnalyzerInputError, which signals *bad input*
+    rather than *unimplemented*. PendingAnalyzerError is still
+    exported for future deferred analyzers (VACF→vDOS, Green-Kubo).
     """
 
-    def test_detect_melting_point_raises(self):
-        from backend.common.reports import (
-            PendingAnalyzerError,
-            detect_melting_point,
-        )
+    def test_detect_melting_point_rejects_empty(self):
+        from backend.common.reports import AnalyzerInputError, detect_melting_point
 
-        with pytest.raises(PendingAnalyzerError) as excinfo:
+        with pytest.raises(AnalyzerInputError):
             detect_melting_point({})
-        assert "4.3b" in str(excinfo.value)
-        assert excinfo.value.analyzer == "detect_melting_point"
 
-    def test_arrhenius_fit_raises(self):
-        from backend.common.reports import PendingAnalyzerError, arrhenius_fit
+    def test_arrhenius_fit_rejects_empty(self):
+        from backend.common.reports import AnalyzerInputError, arrhenius_fit
 
-        with pytest.raises(PendingAnalyzerError):
+        with pytest.raises(AnalyzerInputError):
             arrhenius_fit({})
 
-    def test_fit_elastic_constants_raises(self):
-        from backend.common.reports import (
-            PendingAnalyzerError,
-            fit_elastic_constants,
-        )
+    def test_fit_elastic_constants_rejects_empty(self):
+        from backend.common.reports import AnalyzerInputError, fit_elastic_constants
 
-        with pytest.raises(PendingAnalyzerError):
+        with pytest.raises(AnalyzerInputError):
             fit_elastic_constants({})
 
-    def test_pending_analyzer_error_is_not_implemented_subclass(self):
-        """Callers that catch NotImplementedError still see these.
-        Keeps the type hierarchy honest."""
+    def test_pending_analyzer_error_still_exported(self):
+        """Future-deferred analyzers re-use this sentinel; make sure the
+        export didn't disappear when 4.3b implemented the three 4.3a
+        stubs."""
         from backend.common.reports import PendingAnalyzerError
 
         assert issubclass(PendingAnalyzerError, NotImplementedError)
+        # Round-trip: the message still carries a tracker hint.
+        err = PendingAnalyzerError("vacf_vdos", tracker="Phase 8")
+        assert "vacf_vdos" in str(err)
+        assert "Phase 8" in str(err)
 
 
 # ---------------------------------------------------------------------------

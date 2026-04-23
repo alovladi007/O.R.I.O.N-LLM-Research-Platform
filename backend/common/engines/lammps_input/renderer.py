@@ -127,14 +127,52 @@ def _unique_species_in_order(species: Iterable[str]) -> List[str]:
 
 
 def _timestep_in_units(timestep_fs: float, units: str) -> float:
-    """Convert fs to the LAMMPS time unit for the chosen ``units`` style."""
+    """Convert fs to the LAMMPS time unit for the chosen ``units`` style.
+
+    Only valid for physical-time styles (``metal``, ``real``). For
+    ``lj`` there is no fs ↔ reduced time mapping; callers must use
+    :func:`_resolve_lj_time_fields` instead. Calling this with
+    ``units='lj'`` raises — Session 4.1 silently passed through,
+    producing catastrophically large timesteps for LJ runs.
+    """
     if units == "metal":
         return timestep_fs / 1000.0  # ps
     if units == "real":
         return timestep_fs  # fs
     if units == "lj":
-        return timestep_fs  # dimensionless
+        raise ValueError(
+            "LJ time units are dimensionless; use timestep_lj_reduced "
+            "/ duration_lj_reduced on LAMMPSInputParams instead of fs fields."
+        )
     raise ValueError(f"unsupported LAMMPS units style: {units!r}")
+
+
+# Canonical LJ defaults per the LAMMPS examples/ bench runs. dt* of
+# 0.005 is the universally-cited choice for textbook LJ fluids.
+_LJ_DEFAULT_DT_REDUCED = 0.005
+_LJ_DEFAULT_DURATION_REDUCED = 500.0
+
+
+def _resolve_lj_time_fields(params: LAMMPSInputParams) -> Dict[str, float]:
+    """Compute (timestep, damping, duration, n_steps) for LJ runs.
+
+    Everything here is in LJ reduced units. If the user left the
+    dedicated LJ fields unset we fall back to community defaults so
+    a naive ``LAMMPSInputParams()`` run of an Ar-like system doesn't
+    crash LAMMPS.
+    """
+    dt = params.timestep_lj_reduced or _LJ_DEFAULT_DT_REDUCED
+    duration = params.duration_lj_reduced or _LJ_DEFAULT_DURATION_REDUCED
+    t_damp = params.t_damp_lj_reduced or 100.0 * dt
+    p_damp = params.p_damp_lj_reduced or 1000.0 * dt
+    n_steps = max(1, int(round(duration / dt)))
+    return {
+        "timestep": dt,
+        "t_damp": t_damp,
+        "p_damp": p_damp,
+        "duration": duration,
+        "n_steps": n_steps,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +217,8 @@ fix             1 all npt temp {{ '%.4f' % temperature_k }} {{ '%.4f' % temperat
 {%- endif %}
 
 thermo          {{ thermo_every }}
-thermo_style    custom step temp pe ke etotal press vol
-dump            1 all custom {{ dump_every }} {{ dump_filename }} id type x y z vx vy vz
+thermo_style    custom {{ thermo_columns }}
+dump            1 all custom {{ dump_every }} {{ dump_filename }} id type x y z xu yu zu vx vy vz
 
 run             {{ n_steps }}
 """
@@ -270,10 +308,20 @@ def generate_lammps_input(
     data_obj = LammpsData.from_structure(ns.pmg, atom_style="atomic")
     data_text = data_obj.get_str()
 
-    # Unit conversion
-    dt_units = _timestep_in_units(params.timestep_fs, ff.units)
-    t_damp_units = _timestep_in_units(params.t_damp_fs_resolved, ff.units)
-    p_damp_units = _timestep_in_units(params.p_damp_fs_resolved, ff.units)
+    # Unit conversion. LJ runs are dimensionless; resolve from the
+    # dedicated reduced-unit fields. Physical-units forcefields use fs
+    # fields as before.
+    if ff.units == "lj":
+        lj = _resolve_lj_time_fields(params)
+        dt_units = lj["timestep"]
+        t_damp_units = lj["t_damp"]
+        p_damp_units = lj["p_damp"]
+        n_steps = lj["n_steps"]
+    else:
+        dt_units = _timestep_in_units(params.timestep_fs, ff.units)
+        t_damp_units = _timestep_in_units(params.t_damp_fs_resolved, ff.units)
+        p_damp_units = _timestep_in_units(params.p_damp_fs_resolved, ff.units)
+        n_steps = params.n_steps
 
     input_text = _lammps_template.render(
         prefix=params.run_prefix,
@@ -292,9 +340,10 @@ def generate_lammps_input(
         p_damp_units=p_damp_units,
         ensemble=params.ensemble,
         thermo_every=params.thermo_every,
+        thermo_columns=params.thermo_columns,
         dump_every=params.dump_every,
         dump_filename=params.dump_filename,
-        n_steps=params.n_steps,
+        n_steps=n_steps,
     )
 
     return RenderedLAMMPSInput(
@@ -302,9 +351,54 @@ def generate_lammps_input(
         data_text=data_text,
         forcefield=ff,
         potential_file=ff.potential_file,
-        n_steps=params.n_steps,
+        n_steps=n_steps,
         timestep_in_units=dt_units,
     )
+
+
+# ---------------------------------------------------------------------------
+# Elastic strain helper (Session 4.3b)
+# ---------------------------------------------------------------------------
+
+
+# Voigt convention for the 6-component strain vector: (xx, yy, zz, yz, xz, xy).
+_VOIGT_DIAGONAL_AXES = {0: "x", 1: "y", 2: "z"}
+
+
+def strain_extra_commands(voigt_index: int, strain_value: float) -> List[str]:
+    """Return the LAMMPS lines that apply a ±ε diagonal strain at run start.
+
+    Uses ``change_box`` with the ``remap`` option so atom coordinates
+    scale with the box — the canonical approach for elastic-constant
+    workflows. Off-diagonal (shear, Voigt 3-5) strains aren't emitted
+    here; they require the triclinic ``change_box tilt`` path plus a
+    different thermo_style, and aren't on the Session 4.3b roadmap.
+
+    Returns a list suitable for appending to
+    :attr:`LAMMPSInputParams.extra_commands`. The caller should also
+    set ``thermo_columns`` to include ``pxx pyy pzz`` so the analyzer
+    can read per-component stress.
+    """
+    if voigt_index not in _VOIGT_DIAGONAL_AXES:
+        raise ValueError(
+            f"strain_extra_commands only supports diagonal Voigt indices "
+            f"(0..2); got {voigt_index!r}"
+        )
+    axis = _VOIGT_DIAGONAL_AXES[voigt_index]
+    # LAMMPS ``change_box all x scale 1.005 remap`` uniformly scales the
+    # box x-extent by 1+ε. ``remap`` drags atoms so fractional coords
+    # stay constant (equivalent to applying a deformation gradient).
+    scale = 1.0 + strain_value
+    return [
+        f"# Apply diagonal strain ε_{voigt_index} = {strain_value:+.6f} along {axis}",
+        f"change_box all {axis} scale {scale:.8f} remap",
+    ]
+
+
+# Thermo columns string that includes the per-component pressure tensor.
+# Elastic workflows substitute this into ``params.thermo_columns`` so the
+# analyzer can read ``final_thermo.Pxx`` etc.
+THERMO_COLUMNS_STRESS = "step temp pe ke etotal press vol pxx pyy pzz pxy pxz pyz"
 
 
 # ---------------------------------------------------------------------------

@@ -73,26 +73,43 @@ class TrajectoryFrame:
         return lx * ly * lz
 
     def coords(self) -> List[List[float]]:
-        """Cartesian (x, y, z) for every atom, in atom-id-sorted order.
+        """Wrapped Cartesian (x, y, z), atom-id-sorted.
 
-        Convenient accessor that picks the right columns when the dump
-        includes extra fields. Returns ``[[x, y, z], ...]``.
+        Use this for pair-distance calculations (RDF) that rely on
+        the minimum-image convention. For trajectory-style analyses
+        where atoms cross periodic boundaries (MSD, VACF, diffusion),
+        use :meth:`coords_unwrapped` instead.
         """
-        x_idx = self.column_names.index("x") if "x" in self.column_names else None
-        y_idx = self.column_names.index("y") if "y" in self.column_names else None
-        z_idx = self.column_names.index("z") if "z" in self.column_names else None
-        if x_idx is None or y_idx is None or z_idx is None:
+        return self._coords_for(("x", "y", "z"))
+
+    def coords_unwrapped(self) -> List[List[float]]:
+        """Unwrapped Cartesian (xu, yu, zu), atom-id-sorted.
+
+        Falls back to wrapped (x, y, z) when the dump didn't include
+        the ``xu yu zu`` columns — the Session 4.3b renderer emits
+        them by default, but older trajectories won't have them and
+        we prefer returning *something* over failing. Callers that
+        need *guaranteed* unwrapping should check the presence of
+        ``xu`` in :attr:`column_names` themselves.
+        """
+        if "xu" in self.column_names:
+            return self._coords_for(("xu", "yu", "zu"))
+        return self._coords_for(("x", "y", "z"))
+
+    def _coords_for(self, keys) -> List[List[float]]:
+        try:
+            idxs = [self.column_names.index(k) for k in keys]
+        except ValueError:
             raise TrajectoryParseError(
-                f"dump columns missing x/y/z: {self.column_names}"
+                f"dump columns missing {keys}: have {self.column_names}"
             )
-        # Sort by id when present so frame-to-frame ordering matches.
         id_idx = (
             self.column_names.index("id") if "id" in self.column_names else None
         )
         rows = self.rows
         if id_idx is not None:
             rows = sorted(rows, key=lambda r: int(r[id_idx]))
-        return [[r[x_idx], r[y_idx], r[z_idx]] for r in rows]
+        return [[r[idxs[0]], r[idxs[1]], r[idxs[2]]] for r in rows]
 
     def atom_types(self) -> List[int]:
         """Per-atom type IDs, atom-id-sorted."""

@@ -36,8 +36,10 @@ from .forcefields import (
 )
 from .params import Ensemble, LAMMPSInputParams
 from .renderer import (
+    THERMO_COLUMNS_STRESS,
     RenderedLAMMPSInput,
     generate_lammps_input,
+    strain_extra_commands,
     write_lammps_inputs,
 )
 
@@ -48,7 +50,9 @@ __all__ = [
     "LAMMPSInputParams",
     "NoCompatibleForcefieldError",
     "RenderedLAMMPSInput",
+    "THERMO_COLUMNS_STRESS",
     "default_registry",
     "generate_lammps_input",
+    "strain_extra_commands",
     "write_lammps_inputs",
 ]

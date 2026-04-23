@@ -8,15 +8,23 @@ of raw LAMMPS lines appended just before ``run``.
 Unit convention
 ---------------
 
-All parameters with a time dimension are in **femtoseconds**. The
-renderer converts to the LAMMPS ``units`` style of the chosen
-forcefield:
+For physical-units forcefields (EAM, Tersoff, ReaxFF, ML) every
+time field is in **femtoseconds**:
 
-- ``units metal`` → timestep in **picoseconds** (divide fs by 1000).
+- ``units metal`` → timestep in **picoseconds** (fs / 1000).
 - ``units real`` → timestep in **femtoseconds** (no conversion).
-- ``units lj``   → timestep in reduced time units (user supplies
-  ``timestep_fs`` but we treat it as the reduced value — LJ has no
-  physical time scale without a mass/ε choice).
+
+For LJ (``units lj``) time has no physical scale without choosing σ,
+m, and ε. The fs-named fields don't apply. Users who run LJ supply
+``timestep_lj_reduced`` / ``duration_lj_reduced`` / ``*_damp_lj_reduced``
+in LJ reduced units directly. If those are ``None`` and the chosen
+forcefield is LJ, the renderer falls back to LAMMPS-community
+defaults (``dt* = 0.005``, ``duration* = 500``).
+
+Session 4.1 shipped a bug where ``timestep_fs`` leaked into LJ decks
+as a reduced timestep (``dt* = 1.0`` — catastrophic). Session 4.3b
+adds the dedicated LJ fields + a validator that rejects physical
+time fields on LJ runs unless the user explicitly opts in.
 
 Temperature is always in Kelvin; pressure in bar (LAMMPS' default).
 
@@ -93,6 +101,37 @@ class LAMMPSInputParams(BaseModel):
         description="Barostat damping time. None ⇒ 1000 × timestep_fs.",
     )
 
+    # ------------------------------------------------------------------
+    # LJ reduced-unit overrides (Session 4.3b)
+    # ------------------------------------------------------------------
+    # When the chosen forcefield uses ``units lj``, these take
+    # precedence over the fs-named fields. None ⇒ LJ defaults.
+    timestep_lj_reduced: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Reduced-time timestep for LJ runs. None ⇒ 0.005 (LAMMPS default). "
+            "Ignored for non-LJ forcefields."
+        ),
+    )
+    duration_lj_reduced: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Total reduced time for LJ runs. None ⇒ 500. Ignored for non-LJ."
+        ),
+    )
+    t_damp_lj_reduced: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="LJ thermostat damping (reduced). None ⇒ 100 × timestep_lj_reduced.",
+    )
+    p_damp_lj_reduced: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="LJ barostat damping (reduced). None ⇒ 1000 × timestep_lj_reduced.",
+    )
+
     # Initial velocities
     velocity_seed: int = Field(
         default=12345,
@@ -122,6 +161,15 @@ class LAMMPSInputParams(BaseModel):
         default=100,
         ge=1,
         description="Emit a thermo line every N steps.",
+    )
+    thermo_columns: str = Field(
+        default="step temp pe ke etotal press vol",
+        description=(
+            "``thermo_style custom`` column list. The default suffices "
+            "for routine MD. Elastic workflows should append ``pxx pyy pzz "
+            "pxy pxz pyz`` so the ``fit_elastic_constants`` analyzer can "
+            "read per-component stress."
+        ),
     )
     dump_every: int = Field(
         default=1000,

@@ -295,7 +295,10 @@ class TestRendererCuEAM:
 
         # Pair style + coeff
         assert "pair_style eam" in t
-        assert "pair_coeff * * Cu_u3.eam Cu" in t
+        # Cu_u3.eam is the single-element ``pair_style eam`` format;
+        # pair_coeff takes no element labels. Session 4.3b registry change.
+        assert "pair_coeff * * Cu_u3.eam" in t
+        assert "pair_coeff * * Cu_u3.eam Cu" not in t
 
         # Initial velocities
         assert "velocity        all create 300.0000" in t
@@ -385,30 +388,69 @@ class TestUnitAudits:
         struct = _cubic(10.0, ["Ar"], [[0, 0, 0]])
         r = generate_lammps_input(
             struct,
-            LAMMPSInputParams(timestep_fs=0.005, duration_ps=0.001),
+            # Session 4.3b: LJ runs use dedicated reduced-unit fields.
+            # Leaving them None falls back to the LAMMPS-community
+            # default dt* = 0.005, duration* = 500.
+            LAMMPSInputParams(
+                timestep_lj_reduced=0.005, duration_lj_reduced=1.0,
+            ),
             registry=patched_default_registry,
         )
         assert r.forcefield.name == "lj"
         assert r.forcefield.units == "lj"
-        # lj units passthrough — timestep appears verbatim
         assert r.timestep_in_units == pytest.approx(0.005, abs=1e-12)
+        assert r.n_steps == 200  # duration 1.0 / dt 0.005
         assert "units           lj" in r.input_text
+
+    def test_lj_defaults_when_reduced_fields_unset(self, patched_default_registry):
+        """Session 4.3b regression for the Session 4.1 LJ-units bug.
+
+        Before the fix, a naive ``LAMMPSInputParams()`` on a LJ system
+        produced ``timestep 1.0`` in reduced units — catastrophic.
+        The fix: LJ defaults to ``dt* = 0.005, duration* = 500``
+        whenever the dedicated reduced fields aren't set.
+        """
+        from backend.common.engines.lammps_input import (
+            LAMMPSInputParams, generate_lammps_input,
+        )
+
+        struct = _cubic(10.0, ["Ar"], [[0, 0, 0]])
+        r = generate_lammps_input(
+            struct, LAMMPSInputParams(), registry=patched_default_registry,
+        )
+        assert r.forcefield.units == "lj"
+        assert r.timestep_in_units == pytest.approx(0.005, abs=1e-12)
+        # 500 / 0.005 = 100000
+        assert r.n_steps == 100_000
+        assert "timestep        0.00500000" in r.input_text
 
     def test_real_units_convert_fs_to_fs(self, patched_default_registry):
         """ReaxFF uses ``real`` units; timestep stays in fs.
 
-        We can't actually use ReaxFF (available=False) so construct a
-        custom spec for this assertion. This test locks in the
-        behavior of ``_timestep_in_units`` for the "real" branch.
+        Locks in the behavior of ``_timestep_in_units`` for the "real"
+        branch. LJ is not exercised here — see
+        ``test_timestep_in_units_lj_raises``.
         """
         from backend.common.engines.lammps_input.renderer import _timestep_in_units
 
         assert _timestep_in_units(1.0, "real") == 1.0
         assert _timestep_in_units(0.25, "real") == 0.25
         assert _timestep_in_units(1.0, "metal") == pytest.approx(0.001)
-        assert _timestep_in_units(1.0, "lj") == 1.0
         with pytest.raises(ValueError, match="unsupported"):
             _timestep_in_units(1.0, "cgs")
+
+    def test_timestep_in_units_lj_raises(self):
+        """LJ runs must not go through ``_timestep_in_units``.
+
+        Session 4.1 silently passed fs→reduced, producing dt* = 1.0
+        on naive inputs. The 4.3b fix removes that footgun: calling
+        the fn with ``units='lj'`` raises with a pointer to the
+        correct reduced-unit fields.
+        """
+        from backend.common.engines.lammps_input.renderer import _timestep_in_units
+
+        with pytest.raises(ValueError, match="timestep_lj_reduced"):
+            _timestep_in_units(1.0, "lj")
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +533,7 @@ class TestWriteInputs:
         assert paths["potential"].parent == run_dir
         # Input file references the bare filename so LAMMPS resolves
         # it relative to the run dir.
-        assert "pair_coeff * * Cu_u3.eam Cu" in paths["input"].read_text()
+        assert "pair_coeff * * Cu_u3.eam" in paths["input"].read_text()
 
     def test_lj_requires_no_potential_copy(self, tmp_path):
         from backend.common.engines.lammps_input import (

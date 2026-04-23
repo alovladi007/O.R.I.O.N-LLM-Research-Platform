@@ -284,22 +284,28 @@ def compute_msd(
     *,
     timestep_ps: float = 0.001,
 ) -> MSDResult:
-    """Compute the MSD vs time-from-frame-0.
+    """Compute the MSD vs time-from-frame-0 using **unwrapped** coordinates.
+
+    Before Session 4.3b, this read :meth:`TrajectoryFrame.coords` —
+    the wrapped Cartesian — and produced spurious MSD spikes
+    whenever an atom crossed a periodic boundary (a solid Cu crystal
+    at 900 K looked like it diffused 50 Å² in 5 ps, which is
+    nonsense). Fix: prefer :meth:`TrajectoryFrame.coords_unwrapped`,
+    which returns ``xu yu zu`` when the renderer dumped them.
 
     For production analysis you'd want a time-origin-averaged MSD
-    (rolling window over all possible t_0) which is what MDAnalysis
-    and ovito do. Here we ship the cheaper single-origin MSD because
-    (a) it's enough to distinguish solid from liquid, and (b) the
-    trajectory files our test runs produce are small enough that the
-    N² rolling version isn't needed. Upgrade path is a drop-in
-    replacement of the kernel below.
+    (rolling window over all possible t_0) à la MDAnalysis / ovito.
+    Here we ship the single-origin MSD because (a) it's enough to
+    distinguish solid from liquid for the melting-curve analyzer,
+    and (b) the trajectory files our test runs produce are small
+    enough that the N² rolling version isn't needed.
     """
     frames = list(frames)
     if len(frames) < 2:
         return MSDResult(time_ps=[], msd_ang2=[], n_atoms=0, n_frames=0)
 
     t0 = frames[0]
-    coords0 = t0.coords()
+    coords0 = t0.coords_unwrapped()
     n_atoms = len(coords0)
     if n_atoms == 0:
         return MSDResult(time_ps=[], msd_ang2=[], n_atoms=0, n_frames=0)
@@ -307,7 +313,7 @@ def compute_msd(
     time_ps: List[float] = []
     msd_ang2: List[float] = []
     for frame in frames:
-        coords = frame.coords()
+        coords = frame.coords_unwrapped()
         if len(coords) != n_atoms:
             raise ValueError(
                 f"frame {frame.timestep} has {len(coords)} atoms, "
