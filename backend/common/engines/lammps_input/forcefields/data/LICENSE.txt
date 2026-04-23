@@ -1,0 +1,42 @@
+Licensing notes for shipped LAMMPS interatomic potential files
+===============================================================
+
+Files in this directory are small, ASCII interatomic potentials shipped
+alongside ORION for reproducibility of the Session 4.1 acceptance tests
+and for out-of-the-box runs on a handful of canonical systems.
+
+Each potential carries its own provenance:
+
+1. Si.tersoff, C.tersoff
+   Source:  Distributed with LAMMPS itself under the GPL-2.0 license
+            (LAMMPS potentials/ directory, file Si.tersoff and C.tersoff).
+            See https://docs.lammps.org/pair_tersoff.html
+   Authors: J. Tersoff (1988, 1989).
+   Notes:   Classic single-element Tersoff parameterizations. Used here
+            only for acceptance tests (Si lattice stability, C ring
+            stability). Commercial users of the LAMMPS build that
+            consumes these files inherit LAMMPS' GPL-2.0 terms.
+
+2. EAM (Cu_u3.eam, Ni99_v2.eam.alloy, Al99_v2.eam.alloy)
+   Source:  NIST Interatomic Potentials Repository (IPR).
+            https://www.ctcms.nist.gov/potentials/
+   Authors: Foiles/Baskes/Daw 1986 (Cu), Mishin et al. 1999 (Ni, Al).
+   License: Work of US federal government employees, 17 USC §105 —
+            public domain within the United States. NIST requests that
+            users cite the originating publications.
+   Notes:   NOT bundled in this tree by default due to repository size;
+            install via `scripts/orion_fetch_potentials.sh` which
+            downloads the files from the NIST IPR and drops them here.
+            The forcefield registry detects presence at import time and
+            flips ``available`` accordingly — missing files simply mean
+            the spec is listed but auto-select falls back to the next
+            candidate (typically LJ).
+
+3. Any ReaxFF / ML potential (mace.*, reax.*)
+   NOT shipped. The corresponding registry entries are feature-flagged
+   with ``available=False`` until the user (or a follow-up session)
+   points to a local file.
+
+Citing the potentials you use is a scientific obligation. The
+forcefield registry attaches a ``citation`` field to every spec; ORION
+reports emit that citation automatically in the method block.

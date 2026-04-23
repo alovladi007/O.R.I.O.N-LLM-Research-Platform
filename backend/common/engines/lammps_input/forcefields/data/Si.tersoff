@@ -1,0 +1,6 @@
+# Tersoff parameters for Si (Tersoff 1988 Phys.Rev.B 38, 9902)
+# File mirrored from the LAMMPS distribution (potentials/Si.tersoff).
+# Format: e1 e2 e3 m gamma lambda3 c d costheta0 n beta lambda2 B R D lambda1 A
+
+Si  Si  Si   3.0  1.0  1.7322  1.0039e5  16.217  -0.59825  0.78734
+             1.0999e-6  1.7322  471.18   2.85  0.15  2.4799  1830.8

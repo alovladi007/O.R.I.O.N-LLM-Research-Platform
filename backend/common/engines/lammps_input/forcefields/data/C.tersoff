@@ -1,0 +1,6 @@
+# Tersoff parameters for C (Tersoff 1989 Phys.Rev.B 39, 5566)
+# File mirrored from the LAMMPS distribution (potentials/C.tersoff).
+# Format: e1 e2 e3 m gamma lambda3 c d costheta0 n beta lambda2 B R D lambda1 A
+
+C   C   C    3.0  1.0  0.0  38049.0  4.3484  -0.57058  0.72751
+             1.5724e-7  2.2119  346.74   1.95  0.15  3.4879  1393.6

@@ -1,0 +1,349 @@
+"""Render a LAMMPS input deck from a structure + :class:`LAMMPSInputParams`.
+
+Two artifacts are produced:
+
+1. ``structure.data`` — a LAMMPS ``atom_style atomic`` data file
+   generated through ``pymatgen.io.lammps.data.LammpsData``. That
+   class already handles orthorhombic vs triclinic boxes, per-type
+   masses, and the ``Atoms`` section in atomic coordinates.
+2. ``in.lammps`` — the input script itself, rendered from a Jinja2
+   template that pulls everything it needs from the params + the
+   chosen :class:`~backend.common.engines.lammps_input.forcefields.ForcefieldSpec`.
+
+Structure input
+---------------
+
+Accepts either:
+
+- A pymatgen ``Structure`` (full-featured path).
+- A ``dict`` with keys ``{lattice, species, frac_coords}`` — matches
+  the shape the QE renderer accepts and the shape the Celery task
+  passes through when it doesn't want to rehydrate pymatgen.
+
+Unit handling at a glance
+-------------------------
+
+We keep timesteps in **fs** through the entire API. At render time:
+
+- ``units metal`` ⇒ emit ``timestep`` in ps  (fs / 1000)
+- ``units real``  ⇒ emit ``timestep`` in fs  (verbatim)
+- ``units lj``    ⇒ emit ``timestep`` verbatim; user is responsible
+  for meaning (reduced-time treatment).
+
+Damping times (``t_damp``, ``p_damp``) are given to LAMMPS in the
+same time unit as the timestep.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+
+from jinja2 import Environment
+
+from .forcefields import (
+    ForcefieldRegistry,
+    ForcefieldSpec,
+    NoCompatibleForcefieldError,
+    default_registry,
+)
+from .params import LAMMPSInputParams
+
+
+# ---------------------------------------------------------------------------
+# Output containers
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RenderedLAMMPSInput:
+    """Return of :func:`generate_lammps_input`."""
+
+    input_text: str
+    data_text: str
+    input_filename: str = "in.lammps"
+    data_filename: str = "structure.data"
+    forcefield: Optional[ForcefieldSpec] = None
+    potential_file: Optional[str] = None  # bare filename, if any
+    n_steps: int = 0
+    timestep_in_units: float = 0.0  # emitted value (after unit conversion)
+
+
+# ---------------------------------------------------------------------------
+# Structure normalization
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _NormalizedStructure:
+    species: List[str]
+    # Lazily-built pymatgen Structure (we only need it to hand to LammpsData).
+    pmg: Any
+
+
+def _normalize_structure(structure: Any) -> _NormalizedStructure:
+    # pymatgen Structure (duck-typed)
+    if hasattr(structure, "lattice") and hasattr(structure, "frac_coords"):
+        species = [str(s) for s in structure.species]
+        return _NormalizedStructure(species=species, pmg=structure)
+
+    if isinstance(structure, dict):
+        needed = {"lattice", "species", "frac_coords"}
+        if not needed <= set(structure):
+            raise ValueError(
+                f"structure dict must have keys {needed}; got {sorted(structure)}"
+            )
+        # Defer pymatgen import until here — the function still
+        # raises for bad dicts before the import cost.
+        from pymatgen.core import Lattice, Structure
+
+        lat = Lattice(structure["lattice"])
+        pmg = Structure(
+            lat,
+            species=list(structure["species"]),
+            coords=list(structure["frac_coords"]),
+            coords_are_cartesian=False,
+        )
+        return _NormalizedStructure(species=list(structure["species"]), pmg=pmg)
+
+    raise ValueError(
+        "generate_lammps_input: structure must be a pymatgen Structure "
+        "or a dict with keys {lattice, species, frac_coords}."
+    )
+
+
+def _unique_species_in_order(species: Iterable[str]) -> List[str]:
+    seen: Dict[str, None] = {}
+    for s in species:
+        if s not in seen:
+            seen[s] = None
+    return list(seen)
+
+
+# ---------------------------------------------------------------------------
+# Unit conversion
+# ---------------------------------------------------------------------------
+
+
+def _timestep_in_units(timestep_fs: float, units: str) -> float:
+    """Convert fs to the LAMMPS time unit for the chosen ``units`` style."""
+    if units == "metal":
+        return timestep_fs / 1000.0  # ps
+    if units == "real":
+        return timestep_fs  # fs
+    if units == "lj":
+        return timestep_fs  # dimensionless
+    raise ValueError(f"unsupported LAMMPS units style: {units!r}")
+
+
+# ---------------------------------------------------------------------------
+# Jinja template
+# ---------------------------------------------------------------------------
+
+
+_IN_LAMMPS_TEMPLATE = """\
+# LAMMPS input — generated by ORION Session 4.1.
+# Prefix: {{ prefix }}
+# Forcefield: {{ ff.name }} ({{ ff.kind }})
+# Citation: {{ ff.citation }}
+
+units           {{ ff.units }}
+atom_style      atomic
+boundary        p p p
+
+read_data       {{ data_filename }}
+
+{{ pair_style_line }}
+{{ pair_coeff_line }}
+{% for line in ff_extra_setup_lines -%}
+{{ line }}
+{% endfor %}
+{% if init_velocity -%}
+velocity        all create {{ '%.4f' % temperature_k }} {{ velocity_seed }} dist gaussian
+{% endif %}
+{% for line in extra_commands -%}
+{{ line }}
+{% endfor %}
+timestep        {{ '%.8f' % timestep_in_units }}
+
+{% if ensemble == "nve" -%}
+fix             1 all nve
+{%- elif ensemble == "nvt_nose_hoover" -%}
+fix             1 all nvt temp {{ '%.4f' % temperature_k }} {{ '%.4f' % temperature_k }} {{ '%.6f' % t_damp_units }}
+{%- elif ensemble == "nvt_langevin" -%}
+fix             1 all nve
+fix             2 all langevin {{ '%.4f' % temperature_k }} {{ '%.4f' % temperature_k }} {{ '%.6f' % t_damp_units }} {{ velocity_seed }}
+{%- elif ensemble == "npt" -%}
+fix             1 all npt temp {{ '%.4f' % temperature_k }} {{ '%.4f' % temperature_k }} {{ '%.6f' % t_damp_units }} iso {{ '%.4f' % pressure_bar }} {{ '%.4f' % pressure_bar }} {{ '%.6f' % p_damp_units }}
+{%- endif %}
+
+thermo          {{ thermo_every }}
+thermo_style    custom step temp pe ke etotal press vol
+dump            1 all custom {{ dump_every }} {{ dump_filename }} id type x y z vx vy vz
+
+run             {{ n_steps }}
+"""
+
+
+# LAMMPS input is plain text, not HTML — autoescape must be off or
+# ``&`` in paths gets turned into ``&amp;`` and LAMMPS chokes.
+_jinja_env = Environment(
+    autoescape=False,
+    trim_blocks=False,
+    lstrip_blocks=False,
+    keep_trailing_newline=True,
+)
+_lammps_template = _jinja_env.from_string(_IN_LAMMPS_TEMPLATE)
+
+
+# ---------------------------------------------------------------------------
+# Main renderer
+# ---------------------------------------------------------------------------
+
+
+def generate_lammps_input(
+    structure: Any,
+    params: LAMMPSInputParams,
+    registry: Optional[ForcefieldRegistry] = None,
+    *,
+    potential_dir: Optional[Path] = None,
+) -> RenderedLAMMPSInput:
+    """Render ``in.lammps`` and ``structure.data`` for a MD run.
+
+    Parameters
+    ----------
+    structure
+        pymatgen ``Structure`` or dict (see module docstring).
+    params
+        :class:`LAMMPSInputParams`.
+    registry
+        Optional custom :class:`ForcefieldRegistry`. Defaults to
+        :data:`backend.common.engines.lammps_input.forcefields.default_registry`.
+    potential_dir
+        Absolute path used when rendering ``pair_coeff``. Defaults to
+        ``ForcefieldSpec.resolve_potential_path()`` i.e. the shipped
+        ``data/`` directory. Tests pass their own ``tmp_path``.
+
+    Returns
+    -------
+    :class:`RenderedLAMMPSInput` with both file bodies and bookkeeping.
+    """
+    registry = registry or default_registry
+    ns = _normalize_structure(structure)
+    if not ns.species:
+        raise ValueError("structure has no atoms")
+    unique = _unique_species_in_order(ns.species)
+
+    # Forcefield selection
+    if params.forcefield_name:
+        ff = registry.get(params.forcefield_name)
+        # If the user chose an element-specific FF, it must cover them.
+        if not ff.covers(unique):
+            raise NoCompatibleForcefieldError(
+                f"forcefield {ff.name!r} does not cover elements {unique!r}"
+            )
+    else:
+        ff = registry.auto_select(unique)
+
+    # Potential path written into pair_coeff. We default to the bare
+    # filename so the rendered deck is relocatable — ``write_lammps_inputs``
+    # copies the potential file alongside, and LAMMPS resolves the
+    # reference relative to cwd. If the user passes ``potential_dir``
+    # explicitly, we honor it (useful when the caller prefers a shared
+    # potentials directory over a per-run copy).
+    if ff.potential_file is None:
+        pair_coeff_path_field = ""
+    elif potential_dir is not None:
+        pair_coeff_path_field = str(Path(potential_dir) / ff.potential_file)
+    else:
+        pair_coeff_path_field = ff.potential_file
+
+    pair_coeff_line = ff.pair_coeff_template.format(
+        potential_path=pair_coeff_path_field,
+        elements=" ".join(unique),
+    )
+
+    # LAMMPS data file — via pymatgen.
+    from pymatgen.io.lammps.data import LammpsData
+
+    data_obj = LammpsData.from_structure(ns.pmg, atom_style="atomic")
+    data_text = data_obj.get_str()
+
+    # Unit conversion
+    dt_units = _timestep_in_units(params.timestep_fs, ff.units)
+    t_damp_units = _timestep_in_units(params.t_damp_fs_resolved, ff.units)
+    p_damp_units = _timestep_in_units(params.p_damp_fs_resolved, ff.units)
+
+    input_text = _lammps_template.render(
+        prefix=params.run_prefix,
+        ff=ff,
+        pair_style_line=ff.pair_style_line,
+        pair_coeff_line=pair_coeff_line,
+        ff_extra_setup_lines=list(ff.extra_setup_lines),
+        data_filename="structure.data",
+        init_velocity=params.init_velocity,
+        temperature_k=params.temperature_k,
+        pressure_bar=params.pressure_bar,
+        velocity_seed=params.velocity_seed,
+        extra_commands=list(params.extra_commands),
+        timestep_in_units=dt_units,
+        t_damp_units=t_damp_units,
+        p_damp_units=p_damp_units,
+        ensemble=params.ensemble,
+        thermo_every=params.thermo_every,
+        dump_every=params.dump_every,
+        dump_filename=params.dump_filename,
+        n_steps=params.n_steps,
+    )
+
+    return RenderedLAMMPSInput(
+        input_text=input_text,
+        data_text=data_text,
+        forcefield=ff,
+        potential_file=ff.potential_file,
+        n_steps=params.n_steps,
+        timestep_in_units=dt_units,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Convenience helper — write both files to a directory
+# ---------------------------------------------------------------------------
+
+
+def write_lammps_inputs(
+    rendered: RenderedLAMMPSInput,
+    work_dir: Path,
+    *,
+    copy_potential: bool = True,
+    potential_source_dir: Optional[Path] = None,
+) -> Dict[str, Path]:
+    """Write ``in.lammps`` + ``structure.data`` into ``work_dir``.
+
+    If ``copy_potential`` is True and the forcefield declares a
+    potential file, the file is copied alongside so the input deck
+    is self-contained. Callers can disable the copy when they'd
+    rather reference the source directory directly (saves disk
+    for big ML potentials).
+    """
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    paths: Dict[str, Path] = {}
+
+    in_path = work_dir / rendered.input_filename
+    in_path.write_text(rendered.input_text)
+    paths["input"] = in_path
+
+    data_path = work_dir / rendered.data_filename
+    data_path.write_text(rendered.data_text)
+    paths["data"] = data_path
+
+    if copy_potential and rendered.forcefield and rendered.forcefield.potential_file:
+        src = rendered.forcefield.resolve_potential_path(potential_source_dir)
+        if src and src.is_file():
+            dst = work_dir / rendered.forcefield.potential_file
+            dst.write_bytes(src.read_bytes())
+            paths["potential"] = dst
+
+    return paths
