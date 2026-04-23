@@ -768,6 +768,9 @@ async def get_job_status_summary(
 # more.
 _DISPATCH_TASKS: dict[str, str] = {
     "mock_static": "orion.mock.static",
+    "md_nvt": "orion.md.nvt",                  # Session 4.2
+    "md_nve": "orion.md.nve",                  # Session 4.2
+    "md_npt": "orion.md.npt",                  # Session 4.2
     "dft_static": "orion.dft.static",          # Session 3.2
     "dft_relax": "orion.dft.relax",            # Session 3.3
     "dft_bands": "orion.dft.bands",            # Session 3.3
@@ -786,6 +789,61 @@ _BUILTIN_TEMPLATES: dict[str, dict] = {
         "category": "static",
         "default_parameters": {},
         "default_resources": {"cores": 1, "memory_gb": 1, "walltime_minutes": 5},
+        "is_active": True,
+        "is_public": True,
+    },
+    "md_nvt": {
+        "name": "md_nvt_default",
+        "display_name": "MD NVT (LAMMPS, builtin)",
+        "description": "Auto-created template for LAMMPS NVT Langevin runs.",
+        "engine": "lammps",
+        "category": "md",
+        "default_parameters": {
+            "ensemble": "nvt_langevin",
+            "temperature_k": 300.0,
+            "timestep_fs": 1.0,
+            "duration_ps": 10.0,
+            "thermo_every": 100,
+            "dump_every": 500,
+        },
+        "default_resources": {"cores": 2, "memory_gb": 2, "walltime_minutes": 60},
+        "is_active": True,
+        "is_public": True,
+    },
+    "md_nve": {
+        "name": "md_nve_default",
+        "display_name": "MD NVE (LAMMPS, builtin)",
+        "description": "Auto-created template for LAMMPS NVE runs.",
+        "engine": "lammps",
+        "category": "md",
+        "default_parameters": {
+            "ensemble": "nve",
+            "temperature_k": 300.0,
+            "timestep_fs": 1.0,
+            "duration_ps": 10.0,
+            "thermo_every": 100,
+            "dump_every": 500,
+        },
+        "default_resources": {"cores": 2, "memory_gb": 2, "walltime_minutes": 60},
+        "is_active": True,
+        "is_public": True,
+    },
+    "md_npt": {
+        "name": "md_npt_default",
+        "display_name": "MD NPT (LAMMPS, builtin)",
+        "description": "Auto-created template for LAMMPS NPT Parrinello-Rahman runs.",
+        "engine": "lammps",
+        "category": "md",
+        "default_parameters": {
+            "ensemble": "npt",
+            "temperature_k": 300.0,
+            "pressure_bar": 1.0,
+            "timestep_fs": 1.0,
+            "duration_ps": 20.0,
+            "thermo_every": 100,
+            "dump_every": 1000,
+        },
+        "default_resources": {"cores": 2, "memory_gb": 2, "walltime_minutes": 120},
         "is_active": True,
         "is_public": True,
     },

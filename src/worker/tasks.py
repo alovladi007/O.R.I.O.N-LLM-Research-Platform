@@ -1846,6 +1846,213 @@ def run_dft_phonons_gamma_job(self, job_id: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# LAMMPS MD (NVT / NVE / NPT) — Session 4.2
+# ---------------------------------------------------------------------------
+
+
+def _run_lammps_step(
+    self,
+    job_id: str,
+    *,
+    kind: str,
+    ensemble_override: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Shared body for LAMMPS MD Celery tasks.
+
+    Given *job_id*:
+      1. Load the target Structure.
+      2. Build :class:`LAMMPSInputParams` from ``job.parameters`` (with
+         an optional ensemble override for task-specific ensembles).
+      3. Render via :func:`generate_lammps_input`.
+      4. Run ``lmp`` through :func:`run_lammps`.
+      5. Persist log thermo + RDF + MSD derived values; tarball the
+         run dir to MinIO.
+
+    Binary: reads ``ORION_LMP_PATH`` env (default ``lmp_serial``).
+    """
+    import os
+
+    from backend.common.engines.lammps_input import (
+        LAMMPSInputParams,
+        default_registry,
+        generate_lammps_input,
+    )
+    from backend.common.engines.lammps_run import (
+        compute_msd,
+        compute_rdf,
+        parse_lammps_dump,
+        run_lammps,
+    )
+    from backend.common.jobs import (
+        DEFAULT_ARTIFACTS_BUCKET,
+        build_minio_client,
+        ensure_bucket,
+    )
+    from backend.common.workers import (
+        ArtifactBundle,
+        JobLifecycle,
+        build_run_dir,
+        tar_and_upload_run_dir,
+    )
+    from backend.common.workers.events import RedisPubSubEmitter
+
+    engine, Session = _sync_session_for_worker()
+    minio_client = None
+    try:
+        try:
+            minio_client = build_minio_client()
+            ensure_bucket(minio_client, DEFAULT_ARTIFACTS_BUCKET)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s: MinIO setup failed: %s", kind, exc)
+            minio_client = None
+
+        emitter = RedisPubSubEmitter()
+
+        with Session() as session:
+            with JobLifecycle(
+                job_id, session=session, emitter=emitter, worker_id=self.request.id,
+            ) as lc:
+                assert lc.job is not None
+                structure_id = lc.job.structure_id  # type: ignore[attr-defined]
+                parameters = lc.job.parameters or {}  # type: ignore[attr-defined]
+
+                qe_struct = _load_structure_for_qe(session, structure_id)
+
+                lammps_params_dict = {
+                    k: v for k, v in parameters.items()
+                    if k in LAMMPSInputParams.model_fields
+                }
+                if ensemble_override is not None:
+                    lammps_params_dict["ensemble"] = ensemble_override
+                params = LAMMPSInputParams(**lammps_params_dict)
+
+                rendered = generate_lammps_input(
+                    qe_struct, params, registry=default_registry,
+                )
+
+                run_dir = build_run_dir(f"md-{kind}-{job_id}")
+                lmp_executable = os.getenv("ORION_LMP_PATH", "lmp_serial")
+                walltime = int(parameters.get("walltime_minutes", 60))
+                cpus = int(parameters.get("cpus", 1))
+
+                run_result = run_lammps(
+                    rendered,
+                    run_dir,
+                    lmp_executable=lmp_executable,
+                    cpus=cpus,
+                    walltime_minutes=walltime,
+                )
+                if not run_result.success:
+                    raise RuntimeError(
+                        f"{kind} lmp stage={run_result.stage}: {run_result.error_message}"
+                    )
+
+                # Derived analyzers over the trajectory.
+                outputs: Dict[str, Any] = {
+                    "engine": "lammps",
+                    "kind": kind,
+                    "forcefield": (
+                        rendered.forcefield.name if rendered.forcefield else None
+                    ),
+                    "ensemble": params.ensemble,
+                    "n_steps": rendered.n_steps,
+                    "wall_time_seconds": (
+                        run_result.log.wall_time_seconds if run_result.log else None
+                    ),
+                    "final_thermo": (
+                        run_result.log.final_values() if run_result.log else {}
+                    ),
+                }
+                if run_result.dump_paths:
+                    frames = list(parse_lammps_dump(run_result.dump_paths[0]))
+                    if frames:
+                        lx = min(frames[0].box_lengths())
+                        rdf = compute_rdf(
+                            frames, r_max_ang=lx / 2 - 0.1, n_bins=80,
+                        )
+                        first_peak = rdf.first_peak()
+                        outputs["rdf_first_peak"] = (
+                            {"r": first_peak[0], "g": first_peak[1]}
+                            if first_peak else None
+                        )
+                        msd = compute_msd(
+                            frames,
+                            timestep_ps=params.timestep_fs / 1000.0,
+                        )
+                        outputs["msd_final_ang2"] = (
+                            msd.msd_ang2[-1] if msd.msd_ang2 else None
+                        )
+                        outputs["diffusion_coefficient_ang2_per_ps"] = (
+                            msd.diffusion_coefficient_ang2_per_ps()
+                        )
+
+                bundle = ArtifactBundle(
+                    run_dir=run_dir,
+                    job_id=str(job_id),
+                    manifest={
+                        "engine": "lammps",
+                        "kind": kind,
+                        "forcefield": outputs["forcefield"],
+                        "ensemble": params.ensemble,
+                    },
+                )
+                upload = tar_and_upload_run_dir(
+                    bundle, minio_client=minio_client, bucket=DEFAULT_ARTIFACTS_BUCKET,
+                )
+                extra = dict(getattr(lc.job, "extra_metadata", None) or {})
+                extra["artifact"] = {
+                    "bucket": upload["bucket"],
+                    "key": upload["key"],
+                    "tarball": upload["tarball"],
+                    "size_bytes": upload["size_bytes"],
+                    "uploaded": upload["uploaded"],
+                }
+                lc.job.extra_metadata = extra  # type: ignore[attr-defined]
+
+                lc.outputs = outputs
+
+        return {
+            "job_id": job_id,
+            "status": "success",
+            "kind": kind,
+            "forcefield": outputs["forcefield"],
+            "artifact_key": upload["key"],
+        }
+    finally:
+        try:
+            engine.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@celery_app.task(name="orion.md.nvt", bind=True, acks_late=True)
+def run_md_nvt_job(self, job_id: str) -> Dict[str, Any]:
+    """NVT (canonical) MD via LAMMPS.
+
+    Ensemble forced to ``nvt_langevin`` unless the caller sets a
+    different NVT flavor in ``job.parameters.ensemble``.
+    """
+    params = {}  # inspected inside _run_lammps_step from the job row
+    return _run_lammps_step(self, job_id, kind="md_nvt")
+
+
+@celery_app.task(name="orion.md.nve", bind=True, acks_late=True)
+def run_md_nve_job(self, job_id: str) -> Dict[str, Any]:
+    """NVE (microcanonical) MD via LAMMPS."""
+    return _run_lammps_step(
+        self, job_id, kind="md_nve", ensemble_override="nve",
+    )
+
+
+@celery_app.task(name="orion.md.npt", bind=True, acks_late=True)
+def run_md_npt_job(self, job_id: str) -> Dict[str, Any]:
+    """NPT (isothermal-isobaric) MD via LAMMPS."""
+    return _run_lammps_step(
+        self, job_id, kind="md_npt", ensemble_override="npt",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Workflow tick — Session 2.4
 # ---------------------------------------------------------------------------
 
