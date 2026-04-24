@@ -16,6 +16,7 @@ from .continuum import router as continuum_router
 from .orchestrator import router as orchestrator_router
 from .agent import router as agent_router
 from .properties import router as properties_router
+from .al import router as al_router
 
 __all__ = [
     "health_router",
@@ -34,4 +35,5 @@ __all__ = [
     "orchestrator_router",
     "agent_router",
     "properties_router",
+    "al_router",
 ]

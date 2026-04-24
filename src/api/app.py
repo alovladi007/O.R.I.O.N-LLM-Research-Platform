@@ -54,6 +54,7 @@ from .routers import (
     orchestrator_router,
     agent_router,
     properties_router,
+    al_router,
 )
 from .exceptions import (
     ORIONAPIException,
@@ -284,6 +285,13 @@ def create_app() -> FastAPI:
         properties_router,
         prefix=f"{settings.api_prefix}",
         tags=["properties"],
+    )
+    # Session 6.5 — active-learning campaigns (in-memory store; DB +
+    # Celery wiring follows in 6.5b).
+    app.include_router(
+        al_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["active-learning"],
     )
 
     # Add Prometheus metrics if enabled
