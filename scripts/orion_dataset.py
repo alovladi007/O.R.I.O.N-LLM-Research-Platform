@@ -105,7 +105,9 @@ def cmd_create(args: argparse.Namespace) -> int:
 
     reg = DatasetRegistry()
     fingerprint_fn = None
-    if args.split == "structure_cluster":
+    # SplitSpec normalizes the kind, but the CLI branch below reads the
+    # raw ``args.split`` value so we also accept the hyphen form.
+    if args.split in ("structure_cluster", "structure-cluster"):
         # CLI users who want a structure_cluster split must ship
         # fingerprints on the PropertyRow's ``extras`` dict under the
         # key ``fingerprint`` (list[float]). This avoids the CLI
@@ -162,9 +164,13 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--filter", default="",
                    help="Filter expression, e.g. \"property=bandgap_ev "
                         "AND method.functional='PBE'\"")
+    # Accept both hyphen + underscore forms to match the roadmap's CLI
+    # example (``--split structure-cluster``). SplitSpec's field
+    # validator normalizes them to the canonical underscore kind.
     c.add_argument("--split", default="random",
-                   choices=("random", "stratified_by_prototype",
-                            "structure_cluster"))
+                   choices=("random",
+                            "stratified_by_prototype", "stratified-by-prototype",
+                            "structure_cluster", "structure-cluster"))
     c.add_argument("--train-fraction", type=float, default=0.7)
     c.add_argument("--val-fraction", type=float, default=0.15)
     c.add_argument("--test-fraction", type=float, default=0.15)

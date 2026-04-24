@@ -44,7 +44,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # Row identifier type — structure_id + property name uniquely names
@@ -156,12 +156,30 @@ SplitKind = Literal[
 ]
 
 
+# Canonical-form → canonical-form identity map plus hyphen aliases.
+# The roadmap's CLI example uses ``--split structure-cluster`` (hyphen),
+# while the Python ``Literal`` type uses ``structure_cluster`` (underscore).
+# We accept both on input and store the underscore form.
+_SPLIT_KIND_ALIASES = {
+    "random": "random",
+    "stratified_by_prototype": "stratified_by_prototype",
+    "stratified-by-prototype": "stratified_by_prototype",
+    "structure_cluster": "structure_cluster",
+    "structure-cluster": "structure_cluster",
+}
+
+
 class SplitSpec(BaseModel):
     """Split strategy + fractions + seed.
 
     Fractions must sum to exactly 1.0 (within 1e-6). We reject other
     totals rather than renormalizing because silent renormalization
     makes the "same seed → same split" acceptance test fragile.
+
+    ``kind`` accepts either underscore (``structure_cluster``) or
+    hyphen (``structure-cluster``) forms; the hyphen form matches the
+    roadmap's CLI style. Both normalize to the canonical underscore
+    value, so ``content_hash`` is stable regardless of input style.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -180,6 +198,13 @@ class SplitSpec(BaseModel):
     # test_fraction; callers who want a specific cluster count can
     # override.
     cluster_n_centers: Optional[int] = Field(default=None, ge=1)
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _normalize_split_kind(cls, v):
+        if isinstance(v, str) and v in _SPLIT_KIND_ALIASES:
+            return _SPLIT_KIND_ALIASES[v]
+        return v
 
     def validate_fractions(self) -> None:
         total = self.train_fraction + self.val_fraction + self.test_fraction

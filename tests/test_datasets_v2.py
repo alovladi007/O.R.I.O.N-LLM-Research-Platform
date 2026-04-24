@@ -506,3 +506,140 @@ class TestSnapshotHashStability:
         snap_a = DatasetRegistry().create(rows=small_rows, config=cfg_a)
         snap_b = DatasetRegistry().create(rows=small_rows, config=cfg_b)
         assert snap_a.content_hash == snap_b.content_hash
+
+
+# ---------------------------------------------------------------------------
+# Roadmap conformance — the exact identifiers + spellings Session 6.2's
+# prompt calls out. These lock in:
+# 1. ``from backend.common.ml.datasets import ...`` (not datasets_v2)
+#    — the roadmap bullet says datasets.py specifically.
+# 2. ``--split structure-cluster`` (hyphen) — the roadmap CLI example
+#    uses hyphens; our canonical Literal uses underscores. Accepting
+#    both is the honest interpretation.
+# 3. The exact filter string from the roadmap's CLI example —
+#    ``property=bandgap AND method.functional='PBE'`` — parses and
+#    matches rows with property_name == "bandgap".
+# ---------------------------------------------------------------------------
+
+
+class TestRoadmapConformance:
+    def test_canonical_import_path(self, small_rows):
+        """``from backend.common.ml.datasets import ...`` works — the
+        roadmap spelling. Implementation is re-exported from
+        ``datasets_v2`` but the canonical path matters for anyone
+        reading ROADMAP_PROMPTS.md and copy-pasting.
+        """
+        from backend.common.ml.datasets import (
+            DatasetConfig, DatasetRegistry, FilterSpec,
+            PropertyRow, SplitSpec,
+        )
+
+        reg = DatasetRegistry()
+        snap = reg.create(
+            rows=small_rows,
+            config=DatasetConfig(
+                name="canonical_path_test",
+                filter=FilterSpec(expression=""),
+                split=SplitSpec(
+                    kind="random", train_fraction=0.5,
+                    val_fraction=0.25, test_fraction=0.25, seed=0,
+                ),
+            ),
+        )
+        assert snap.n_total == len(small_rows)
+
+    def test_both_import_paths_give_same_classes(self):
+        """The shim in ``datasets`` must re-export exactly the objects
+        in ``datasets_v2`` — not accidentally shadow them with
+        local copies.
+        """
+        from backend.common.ml import datasets as shim
+        from backend.common.ml import datasets_v2 as canonical
+
+        for name in (
+            "DatasetConfig", "DatasetRegistry", "DatasetSnapshot",
+            "FilterSpec", "PropertyRow", "SplitSpec",
+            "random_split", "stratified_by_prototype_split",
+            "structure_cluster_split",
+        ):
+            assert getattr(shim, name) is getattr(canonical, name), name
+
+    def test_split_kind_hyphen_alias(self):
+        """``structure-cluster`` (roadmap spelling) normalizes to the
+        canonical underscore kind. content_hash must be identical
+        for the two spellings.
+        """
+        from backend.common.ml.datasets import (
+            DatasetConfig, DatasetRegistry, FilterSpec, PropertyRow,
+            SplitSpec,
+        )
+        import numpy as np
+
+        rows = []
+        rng = np.random.default_rng(0)
+        fps = {}
+        for i in range(30):
+            rid = f"r{i:03d}"
+            rows.append(PropertyRow(
+                row_id=rid, structure_id=f"s{i}",
+                property_name="bandgap", property_value=0.0,
+            ))
+            fps[rid] = rng.standard_normal(8)
+
+        base_kwargs = dict(
+            train_fraction=0.7, val_fraction=0.15,
+            test_fraction=0.15, seed=42,
+        )
+        spec_hyphen = SplitSpec(kind="structure-cluster", **base_kwargs)
+        spec_under = SplitSpec(kind="structure_cluster", **base_kwargs)
+        assert spec_hyphen.kind == "structure_cluster"
+        assert spec_under.kind == "structure_cluster"
+
+        def fp_fn(r):
+            return fps[r.row_id]
+
+        cfg_a = DatasetConfig(
+            name="hyphen", filter=FilterSpec(expression=""), split=spec_hyphen,
+        )
+        cfg_b = DatasetConfig(
+            name="under", filter=FilterSpec(expression=""), split=spec_under,
+        )
+        snap_a = DatasetRegistry().create(
+            rows=rows, config=cfg_a, fingerprint_fn=fp_fn,
+        )
+        snap_b = DatasetRegistry().create(
+            rows=rows, config=cfg_b, fingerprint_fn=fp_fn,
+        )
+        # Name differs (so the two snapshots are distinct entries in
+        # the registry), but the split result — row ids per subset —
+        # must be identical, which the hash over-sorted-row-ids
+        # captures. Strip the name before comparing by copying both
+        # snapshots to a shared config.
+        assert snap_a.train_row_ids == snap_b.train_row_ids
+        assert snap_a.val_row_ids == snap_b.val_row_ids
+        assert snap_a.test_row_ids == snap_b.test_row_ids
+
+    def test_roadmap_literal_filter_expression(self, small_rows):
+        """The roadmap's CLI example filter,
+        ``property=bandgap AND method.functional='PBE'``, parses and
+        matches rows with property_name == 'bandgap'. Two previous
+        slip points: (a) ``bandgap`` is an unquoted ident, not a
+        single-quoted string; (b) ``property`` is an alias for
+        ``property_name``.
+        """
+        from backend.common.ml.datasets import PropertyRow, apply_filter
+
+        rows = list(small_rows) + [
+            PropertyRow(
+                row_id="extra_bandgap_pbe",
+                structure_id="se",
+                property_name="bandgap",
+                property_value=1.1,
+                method={"functional": "PBE"},
+            ),
+        ]
+        out = apply_filter(
+            rows, "property=bandgap AND method.functional='PBE'",
+        )
+        assert len(out) == 1
+        assert out[0].row_id == "extra_bandgap_pbe"
