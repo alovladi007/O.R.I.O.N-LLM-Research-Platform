@@ -55,6 +55,7 @@ from .routers import (
     agent_router,
     properties_router,
     al_router,
+    bo_router,
 )
 from .exceptions import (
     ORIONAPIException,
@@ -292,6 +293,12 @@ def create_app() -> FastAPI:
         al_router,
         prefix=f"{settings.api_prefix}",
         tags=["active-learning"],
+    )
+    # Session 7.1 — Bayesian optimization (stateless ``/bo/suggest``).
+    app.include_router(
+        bo_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["bayesian-optimization"],
     )
 
     # Add Prometheus metrics if enabled

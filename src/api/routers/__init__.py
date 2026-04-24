@@ -17,6 +17,7 @@ from .orchestrator import router as orchestrator_router
 from .agent import router as agent_router
 from .properties import router as properties_router
 from .al import router as al_router
+from .bo import router as bo_router
 
 __all__ = [
     "health_router",
@@ -36,4 +37,5 @@ __all__ = [
     "agent_router",
     "properties_router",
     "al_router",
+    "bo_router",
 ]
