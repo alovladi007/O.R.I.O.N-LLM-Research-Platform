@@ -230,3 +230,7 @@ runs/
 snapshots/
 mlruns/
 mlflow.db
+# Lightning dumps default ModelCheckpoint files into ./checkpoints/
+# when trainer.save_checkpoint is invoked without an explicit dir.
+checkpoints/
+lightning_logs/
