@@ -221,3 +221,12 @@ neo4j/
 
 # Elasticsearch
 elasticsearch/
+
+# Phase 6 ML pipeline artifacts — runtime outputs of
+# scripts/orion_fetch_mp_oxides.py, orion_dataset.py, and
+# orion_train_baseline.py. Checked into runtime only, not source.
+data/
+runs/
+snapshots/
+mlruns/
+mlflow.db
