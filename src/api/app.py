@@ -56,6 +56,7 @@ from .routers import (
     properties_router,
     al_router,
     bo_router,
+    agent_loop_router,
 )
 from .exceptions import (
     ORIONAPIException,
@@ -299,6 +300,12 @@ def create_app() -> FastAPI:
         bo_router,
         prefix=f"{settings.api_prefix}",
         tags=["bayesian-optimization"],
+    )
+    # Session 7.3 — agent-loop kill switch + log-readback.
+    app.include_router(
+        agent_loop_router,
+        prefix=f"{settings.api_prefix}",
+        tags=["agent-loop"],
     )
 
     # Add Prometheus metrics if enabled

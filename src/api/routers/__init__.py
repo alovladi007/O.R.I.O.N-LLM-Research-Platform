@@ -18,6 +18,7 @@ from .agent import router as agent_router
 from .properties import router as properties_router
 from .al import router as al_router
 from .bo import router as bo_router
+from .agent_loop import router as agent_loop_router
 
 __all__ = [
     "health_router",
@@ -38,4 +39,5 @@ __all__ = [
     "properties_router",
     "al_router",
     "bo_router",
+    "agent_loop_router",
 ]
