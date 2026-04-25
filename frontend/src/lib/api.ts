@@ -277,11 +277,21 @@ export async function postJson<T, B = unknown>(
 // --------------------------------------------------------------------
 
 import { structures } from './api-structures';
+import { jobs, workflowRuns } from './api-jobs';
 
 // Re-export auth-context hooks so pages have one import surface for
 // "platform-wide concerns" (api wrappers + auth + role gate).
 export { useAuth, useRequireRole } from './auth-context';
 export { structures } from './api-structures';
+export { jobs, workflowRuns } from './api-jobs';
+export type {
+  SimulationJobResponse as JobRow,
+  JobListParams,
+  JobListResult,
+  WorkflowRunResponse as WorkflowRunRow,
+} from './api-jobs';
+export { openSse } from './sse';
+export type { SseHandle, SseHandlers } from './sse';
 export type {
   StructureListParams,
   StructureListResult,
@@ -295,9 +305,11 @@ export type {
 export const api = {
   auth,
   structures,
+  jobs,
+  workflowRuns,
   getJson,
   postJson,
-  // jobs, ml, al, bo, agent — wrappers added by Sessions 9.3 / 9.4.
+  // ml, al, bo, agent — wrappers added by Session 9.4.
 };
 
 // --------------------------------------------------------------------

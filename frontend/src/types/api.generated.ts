@@ -991,6 +991,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflow-runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream workflow-run + per-step state transitions as SSE
+         * @description Returns a text/event-stream that emits a JSON event every time the workflow run's status changes OR any contained step transitions between PENDING / DISPATCHABLE / RUNNING / SUCCEEDED / FAILED / CANCELLED. Polling-based at 2 s cadence (matches /jobs/{id}/events from Session 1.4); Phase 10 replaces the polling loop with a Redis pub/sub push from the Celery step-completion hook.
+         */
+        get: operations["stream_workflow_run_events_api_v1_workflow_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workflow-runs/{run_id}/manifest": {
         parameters: {
             query?: never;
@@ -9210,6 +9230,51 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkflowRunResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Workflow run not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_workflow_run_events_api_v1_workflow_runs__run_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Not authenticated */

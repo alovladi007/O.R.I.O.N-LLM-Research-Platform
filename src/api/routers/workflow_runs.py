@@ -177,6 +177,130 @@ async def cancel_workflow_run(
     return WorkflowRunResponse.model_validate(run)
 
 
+@router.get(
+    "/{run_id}/events",
+    summary="Stream workflow-run + per-step state transitions as SSE",
+    description=(
+        "Returns a text/event-stream that emits a JSON event every time "
+        "the workflow run's status changes OR any contained step transitions "
+        "between PENDING / DISPATCHABLE / RUNNING / SUCCEEDED / FAILED / "
+        "CANCELLED. Polling-based at 2 s cadence (matches "
+        "/jobs/{id}/events from Session 1.4); Phase 10 replaces the polling "
+        "loop with a Redis pub/sub push from the Celery step-completion hook."
+    ),
+)
+async def stream_workflow_run_events(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Live SSE feed of workflow-run + per-step state for the DAG view.
+
+    Phase 9 / Session 9.3 wires this up so the /workflows/{id} page can
+    paint each DAG node with its current color (gray / blue / green /
+    red / amber) without the user mashing F5. The event types the
+    client should handle:
+
+        ``snapshot``  initial state on connect (run + step list)
+        ``run``       run-level status change
+        ``step``      one step's status change (carries step_id)
+        ``terminal``  final event when run reaches a terminal state
+    """
+    from fastapi.responses import StreamingResponse
+    import asyncio
+    import json
+
+    initial = await _reload_run_with_steps(db, run_id)
+    if initial is None:
+        raise NotFoundError("WorkflowRun", run_id)
+
+    def _event(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+    async def _poll_and_stream():
+        last_run_status: str | None = None
+        last_step_status: dict[str, str] = {}
+        # Initial snapshot.
+        run = await _reload_run_with_steps(db, run_id)
+        yield _event(
+            "snapshot",
+            {
+                "run_id": str(run_id),
+                "status": run.status,
+                "steps": [
+                    {
+                        "step_id": s.step_id,
+                        "status": s.status,
+                        "job_id": str(s.simulation_job_id)
+                        if s.simulation_job_id is not None
+                        else None,
+                    }
+                    for s in run.steps
+                ],
+            },
+        )
+        last_run_status = run.status
+        last_step_status = {s.step_id: s.status for s in run.steps}
+
+        while True:
+            await db.commit()  # release any cached identity
+            current = await _reload_run_with_steps(db, run_id)
+            if current is None:
+                yield _event("error", {"reason": "run_disappeared"})
+                return
+
+            # Run-level transition.
+            if current.status != last_run_status:
+                yield _event(
+                    "run",
+                    {
+                        "run_id": str(run_id),
+                        "status": current.status,
+                    },
+                )
+                last_run_status = current.status
+
+            # Per-step transitions.
+            for step in current.steps:
+                prev = last_step_status.get(step.step_id)
+                if prev != step.status:
+                    yield _event(
+                        "step",
+                        {
+                            "run_id": str(run_id),
+                            "step_id": step.step_id,
+                            "status": step.status,
+                            "job_id": str(step.simulation_job_id)
+                            if step.simulation_job_id is not None
+                            else None,
+                        },
+                    )
+                    last_step_status[step.step_id] = step.status
+
+            terminal_states = {
+                WorkflowRunStatus.COMPLETED.value,
+                WorkflowRunStatus.FAILED.value,
+                WorkflowRunStatus.CANCELLED.value,
+            }
+            if current.status in terminal_states:
+                yield _event(
+                    "terminal",
+                    {
+                        "run_id": str(run_id),
+                        "final_status": current.status,
+                    },
+                )
+                return
+
+            await asyncio.sleep(2.0)
+
+    return StreamingResponse(
+        _poll_and_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/{run_id}/manifest")
 async def get_workflow_manifest(
     run_id: uuid.UUID,
