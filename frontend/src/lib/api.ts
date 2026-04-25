@@ -278,18 +278,32 @@ export async function postJson<T, B = unknown>(
 
 import { structures } from './api-structures';
 import { jobs, workflowRuns } from './api-jobs';
+import { al, bo, ml } from './api-research';
 
 // Re-export auth-context hooks so pages have one import surface for
 // "platform-wide concerns" (api wrappers + auth + role gate).
 export { useAuth, useRequireRole } from './auth-context';
 export { structures } from './api-structures';
 export { jobs, workflowRuns } from './api-jobs';
+export { al, bo, ml } from './api-research';
 export type {
   SimulationJobResponse as JobRow,
   JobListParams,
   JobListResult,
   WorkflowRunResponse as WorkflowRunRow,
 } from './api-jobs';
+export type {
+  ALCampaignCreate,
+  ALCampaignResponse,
+  ALCycleResponse,
+  BOSuggestRequest,
+  BOSuggestResponse,
+  ParetoFrontRequest,
+  ParetoFrontResponse,
+  ModelInfoResponse,
+  PropertyPredictionRequest,
+  PropertyPredictionResponse,
+} from './api-research';
 export { openSse } from './sse';
 export type { SseHandle, SseHandlers } from './sse';
 export type {
@@ -307,9 +321,11 @@ export const api = {
   structures,
   jobs,
   workflowRuns,
+  al,
+  bo,
+  ml,
   getJson,
   postJson,
-  // ml, al, bo, agent — wrappers added by Session 9.4.
 };
 
 // --------------------------------------------------------------------

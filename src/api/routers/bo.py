@@ -128,6 +128,36 @@ class BOSuggestResponse(BaseModel):
     n_candidates: int
 
 
+class ParetoFrontRequest(BaseModel):
+    """Request body for the Pareto-front helper.
+
+    Carries the raw N×M objective matrix ``Y`` (Python list of lists)
+    and a ``minimize`` flag per objective. Matches the
+    :func:`backend.common.ml.bo_v2.pareto_front` signature exactly.
+    """
+
+    Y: List[List[float]] = Field(
+        ..., min_length=1,
+        description="N×M matrix of objective values.",
+    )
+    minimize: List[bool] = Field(
+        ..., min_length=1,
+        description="Per-objective minimize flag (length must match Y[0]).",
+    )
+
+
+class ParetoFrontResponse(BaseModel):
+    """Boolean mask + the indices of Pareto-optimal rows.
+
+    The frontend's MO campaign-detail page consumes ``optimal_indices``
+    to highlight the front in a recharts scatter; the boolean mask is
+    handy for callers that prefer indexed-into-original-order access.
+    """
+
+    mask: List[bool]
+    optimal_indices: List[int]
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -233,3 +263,48 @@ async def suggest_bo(
         current_user.id, body.q, len(objectives), len(body.history), len(cands),
     )
     return BOSuggestResponse(candidates=cands, n_candidates=len(cands))
+
+
+@router.post(
+    "/pareto-front",
+    response_model=ParetoFrontResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Compute the Pareto-optimal mask of an objective matrix",
+    description=(
+        "Cheap pure-numpy helper for the frontend's multi-objective "
+        "campaign-detail page (Phase 9 / Session 9.4). Wraps "
+        "``backend.common.ml.bo_v2.pareto_front``."
+    ),
+)
+async def pareto_front_endpoint(
+    body: ParetoFrontRequest,
+    current_user: User = Depends(get_current_active_user),
+) -> ParetoFrontResponse:
+    import numpy as np
+
+    from backend.common.ml.bo_v2 import pareto_front
+
+    Y = np.asarray(body.Y, dtype=float)
+    if Y.ndim != 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Y must be 2-D; got shape {Y.shape}",
+        )
+    if len(body.minimize) != Y.shape[1]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"minimize length {len(body.minimize)} doesn't match "
+                f"Y's column count {Y.shape[1]}"
+            ),
+        )
+    try:
+        mask = pareto_front(Y, minimize=body.minimize)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc),
+        ) from exc
+    return ParetoFrontResponse(
+        mask=mask.tolist(),
+        optimal_indices=[i for i, b in enumerate(mask) if b],
+    )

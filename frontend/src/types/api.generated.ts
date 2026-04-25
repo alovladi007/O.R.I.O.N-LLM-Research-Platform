@@ -2768,6 +2768,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/bo/pareto-front": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Compute the Pareto-optimal mask of an objective matrix
+         * @description Cheap pure-numpy helper for the frontend's multi-objective campaign-detail page (Phase 9 / Session 9.4). Wraps ``backend.common.ml.bo_v2.pareto_front``.
+         */
+        post: operations["pareto_front_endpoint_api_v1_bo_pareto_front_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agent/campaigns/{campaign_id}/stop": {
         parameters: {
             query?: never;
@@ -5366,6 +5386,40 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * ParetoFrontRequest
+         * @description Request body for the Pareto-front helper.
+         *
+         *     Carries the raw N×M objective matrix ``Y`` (Python list of lists)
+         *     and a ``minimize`` flag per objective. Matches the
+         *     :func:`backend.common.ml.bo_v2.pareto_front` signature exactly.
+         */
+        ParetoFrontRequest: {
+            /**
+             * Y
+             * @description N×M matrix of objective values.
+             */
+            Y: number[][];
+            /**
+             * Minimize
+             * @description Per-objective minimize flag (length must match Y[0]).
+             */
+            minimize: boolean[];
+        };
+        /**
+         * ParetoFrontResponse
+         * @description Boolean mask + the indices of Pareto-optimal rows.
+         *
+         *     The frontend's MO campaign-detail page consumes ``optimal_indices``
+         *     to highlight the front in a recharts scatter; the boolean mask is
+         *     handy for callers that prefer indexed-into-original-order access.
+         */
+        ParetoFrontResponse: {
+            /** Mask */
+            mask: boolean[];
+            /** Optimal Indices */
+            optimal_indices: number[];
         };
         /**
          * PredictionHistoryResponse
@@ -12614,6 +12668,53 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BOSuggestResponse"];
+                };
+            };
+            /** @description Invalid space / history / objectives */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pareto_front_endpoint_api_v1_bo_pareto_front_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ParetoFrontRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParetoFrontResponse"];
                 };
             };
             /** @description Invalid space / history / objectives */
