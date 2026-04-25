@@ -1,6 +1,12 @@
 # Core dependencies
 pandas>=2.0.0
-numpy>=1.24.0
+# torch 2.2 (the version pinned by torch-geometric and BoTorch) requires
+# numpy < 2 for its tensor↔ndarray interop. Without the upper cap, CI on
+# Python 3.10 picks up numpy 2.x and every torch.tensor(...).numpy() call
+# raises ``RuntimeError: Numpy is not available`` — which silently breaks
+# the BoTorch / CGCNN / pretty-much-every-Phase-6+ test path. Bump the
+# upper bound when we move to torch 2.3+ in a future deploy session.
+numpy>=1.24.0,<2.0
 
 # AI/ML dependencies (LangChain stack retained for the Phase 7 agent work.
 # RAG-specific extras like langchain-community + faiss-cpu + sentence-transformers
