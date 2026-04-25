@@ -502,7 +502,7 @@ export default function DesignPage() {
               {!results && !loading && !error && (
                 <div className="text-center py-12">
                   <p className="text-gray-500">
-                    Configure search criteria and click "Search Materials" to find
+                    Configure search criteria and click &quot;Search Materials&quot; to find
                     candidates.
                   </p>
                 </div>

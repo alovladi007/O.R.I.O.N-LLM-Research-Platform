@@ -3,18 +3,37 @@ Authentication and user management router for NANO-OS API.
 
 Provides:
 - User registration
-- Login with JWT tokens
+- Login with JWT tokens (bearer **or** httpOnly cookie — see ``mode=``)
 - Token refresh
+- Logout (clears cookies if cookie-mode was used)
 - Current user information
 - OAuth2 password flow
+
+Auth modes
+----------
+
+The ``POST /auth/login`` endpoint supports two response modes via the
+``mode`` query parameter (default ``bearer``):
+
+- ``mode=bearer`` (default) — returns the access + refresh tokens in
+  the response body, as before. Used by curl / Postman / the Python
+  SDK / the OAuth2 password flow.
+- ``mode=cookie`` (Phase 9 / Session 9.1) — returns the same
+  :class:`Token` body **plus** sets the access + refresh tokens as
+  ``httpOnly``, ``SameSite=Lax`` cookies. The frontend never sees
+  the raw token (no ``localStorage``); the
+  :func:`backend.common...security.get_current_user` dependency
+  reads from the cookie when no ``Authorization`` header is present.
+
+Backward-compatible — bearer clients keep working unchanged.
 """
 
-from fastapi import APIRouter, Depends, status, HTTPException
+from fastapi import APIRouter, Depends, Query, Request, Response, status, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Literal, Optional
 import logging
 import uuid
 
@@ -28,10 +47,13 @@ from ..schemas.auth import (
     TokenRefresh,
 )
 from ..auth.security import (
+    ACCESS_COOKIE_NAME,
+    REFRESH_COOKIE_NAME,
     SecurityService,
     get_current_user,
-    get_current_active_user
+    get_current_active_user,
 )
+from ..config import settings as app_settings
 from ..exceptions import (
     AuthenticationError,
     ConflictError,
@@ -43,7 +65,12 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/auth",
+    # No prefix — app.py mounts this router under ``/api/v1/auth``.
+    # (Pre-Phase-9 the router *also* had ``prefix="/auth"`` which made
+    # every endpoint live at ``/api/v1/auth/auth/...``; the OAuth2
+    # scheme's ``tokenUrl`` already pointed at the un-doubled
+    # ``/api/v1/auth/token``, so the bug had been latent. Session 9.1
+    # cleans it up.)
     tags=["authentication"],
     responses={
         401: {"description": "Authentication failed"},
@@ -180,7 +207,17 @@ async def register(
 )
 async def login(
     credentials: UserLogin,
-    db: AsyncSession = Depends(get_db)
+    response: Response,
+    mode: Literal["bearer", "cookie"] = Query(
+        "bearer",
+        description=(
+            "Token-delivery mode. 'bearer' returns tokens in the body "
+            "(default). 'cookie' additionally sets httpOnly, SameSite=Lax "
+            "access + refresh cookies that subsequent requests can use "
+            "in place of the Authorization header."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
 ) -> Token:
     """
     Authenticate user and return JWT tokens.
@@ -236,6 +273,36 @@ async def login(
 
     logger.info(f"Login successful: {user.username} ({user.id})")
 
+    if mode == "cookie":
+        # httpOnly + SameSite=Lax to keep the access token out of JS
+        # while still letting top-level navigations carry it. ``secure``
+        # mirrors the production-environment flag — in dev (HTTP) we
+        # leave it off so the browser will accept the cookie over
+        # http://localhost.
+        secure = app_settings.is_production
+        response.set_cookie(
+            key=ACCESS_COOKIE_NAME,
+            value=access_token,
+            max_age=int(access_token_expires.total_seconds()),
+            httponly=True,
+            secure=secure,
+            samesite="lax",
+            path="/",
+        )
+        response.set_cookie(
+            key=REFRESH_COOKIE_NAME,
+            value=refresh_token,
+            max_age=int(refresh_token_expires.total_seconds()),
+            httponly=True,
+            secure=secure,
+            samesite="lax",
+            # Refresh-token endpoint lives at /api/v1/auth/refresh; we
+            # could scope the cookie there, but FastAPI clients treat
+            # path scoping inconsistently across browsers. Keep at /
+            # for now and revisit in Session 11 (security hardening).
+            path="/",
+        )
+
     return Token(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -253,13 +320,15 @@ async def login(
     include_in_schema=True
 )
 async def token(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> Token:
     """
     OAuth2 password flow - standard token endpoint.
 
-    This endpoint is used by OAuth2PasswordBearer scheme.
+    This endpoint is used by OAuth2PasswordBearer scheme. Always uses
+    ``mode=bearer`` — OAuth2 callers consume the body tokens directly.
     """
     # Convert OAuth2 form to our UserLogin schema
     credentials = UserLogin(
@@ -267,8 +336,8 @@ async def token(
         password=form_data.password
     )
 
-    # Reuse login logic
-    return await login(credentials, db)
+    # Reuse login logic with bearer mode (no cookies for OAuth2 flow).
+    return await login(credentials, response, mode="bearer", db=db)
 
 
 @router.post(
@@ -289,8 +358,18 @@ async def token(
     }
 )
 async def refresh_token(
-    token_data: TokenRefresh,
-    db: AsyncSession = Depends(get_db)
+    request: Request,
+    response: Response,
+    token_data: Optional[TokenRefresh] = None,
+    mode: Literal["bearer", "cookie"] = Query(
+        "bearer",
+        description=(
+            "If 'cookie', read the refresh token from the "
+            "orion_refresh_token httpOnly cookie instead of the body, "
+            "and set fresh cookies on the response."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
 ) -> Token:
     """
     Refresh access token using refresh token.
@@ -298,8 +377,19 @@ async def refresh_token(
     logger.debug("Token refresh requested")
 
     try:
+        # Resolve the refresh token: cookie mode reads from request.cookies,
+        # bearer mode requires the body.
+        if mode == "cookie":
+            refresh_str = request.cookies.get(REFRESH_COOKIE_NAME)
+            if not refresh_str:
+                raise AuthenticationError("Missing refresh-token cookie")
+        else:
+            if token_data is None or not token_data.refresh_token:
+                raise AuthenticationError("Missing refresh_token in body")
+            refresh_str = token_data.refresh_token
+
         # Decode refresh token
-        payload = SecurityService.decode_token(token_data.refresh_token)
+        payload = SecurityService.decode_token(refresh_str)
 
         # Validate token type
         if payload.get("type") != "refresh":
@@ -340,6 +430,27 @@ async def refresh_token(
 
         logger.info(f"Token refreshed for user: {user.username}")
 
+        if mode == "cookie":
+            secure = app_settings.is_production
+            response.set_cookie(
+                key=ACCESS_COOKIE_NAME,
+                value=access_token,
+                max_age=int(access_token_expires.total_seconds()),
+                httponly=True,
+                secure=secure,
+                samesite="lax",
+                path="/",
+            )
+            response.set_cookie(
+                key=REFRESH_COOKIE_NAME,
+                value=refresh_token,
+                max_age=int(refresh_token_expires.total_seconds()),
+                httponly=True,
+                secure=secure,
+                samesite="lax",
+                path="/",
+            )
+
         return Token(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -348,9 +459,38 @@ async def refresh_token(
             user=UserResponse.model_validate(user)
         )
 
+    except AuthenticationError:
+        raise
     except Exception as e:
         logger.warning(f"Token refresh failed: {e}")
         raise AuthenticationError("Invalid or expired refresh token")
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Log out — clears auth cookies",
+    description=(
+        "Clears the orion_access_token and orion_refresh_token cookies "
+        "if they are present. Bearer-token clients can ignore this — "
+        "JWT statelessness means there's no server-side state to clear; "
+        "the client should drop its in-memory token. Returns 204."
+    ),
+)
+async def logout() -> Response:
+    """Clear the auth cookies. Idempotent — safe to call when not logged in.
+
+    Returns a fresh 204 response with the two cookie-deletion
+    Set-Cookie headers attached. We construct the response directly
+    instead of mutating an injected ``Response`` because the latter
+    pattern is incompatible with FastAPI's status_code=204 contract
+    (which yields an empty body and ignores ``set_cookie`` calls
+    routed through the dependency-injected response).
+    """
+    resp = Response(status_code=status.HTTP_204_NO_CONTENT)
+    resp.delete_cookie(ACCESS_COOKIE_NAME, path="/")
+    resp.delete_cookie(REFRESH_COOKIE_NAME, path="/")
+    return resp
 
 
 @router.get(

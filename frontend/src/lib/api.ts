@@ -1,643 +1,312 @@
 /**
- * API client for ORION platform
- * Provides typed functions for backend API calls
+ * Phase 9 / Session 9.1 — typed ORION API client.
+ *
+ * One axios instance, cookie-based auth (no localStorage), refresh-
+ * on-401 interceptor with single-flight retry. All request / response
+ * shapes are pulled from `src/types/api.generated.ts` which is
+ * generated from the backend's live OpenAPI schema (see
+ * `scripts/gen-api-types.sh`). Hand-written DTOs are deprecated.
+ *
+ * Auth model
+ * ----------
+ *
+ * The frontend always uses the cookie-mode path:
+ *   - POST /auth/login?mode=cookie         → server sets httpOnly cookies
+ *   - all subsequent requests              → cookies travel automatically
+ *     via `withCredentials: true`
+ *   - POST /auth/refresh?mode=cookie       → server reads cookie, sets
+ *     fresh ones
+ *   - POST /auth/logout                    → server clears cookies
+ *
+ * No JWT ever lives in JavaScript memory longer than the response
+ * promise — that's the whole point of cookie mode (Phase 9 / Session
+ * 9.1 in the roadmap; httpOnly cookies are immune to XSS-driven
+ * token theft, the primary risk of the old `localStorage` flow).
+ *
+ * Backward compatibility
+ * ----------------------
+ *
+ * The bearer flow is still supported by the backend (curl / Postman
+ * / Python SDK use it). This client doesn't expose bearer tokens —
+ * if a non-browser caller needs them, it should hit the API
+ * directly without going through this module.
  */
 
-import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
-import {
-  Structure,
-  StructureListParams,
-  StructureListResponse,
-  Material,
-} from '@/types/structures';
-import {
-  DesignSearchRequest,
-  DesignSearchResponse,
-  DesignStats,
-} from '@/types/design';
-import {
-  ProvenanceChain,
-  ProvenanceTimeline,
-  ProvenanceSummary,
-} from '@/types/provenance';
+import axios, {
+  type AxiosError,
+  type AxiosInstance,
+  type AxiosRequestConfig,
+  type InternalAxiosRequestConfig,
+} from 'axios';
+import type { components, paths } from '@/types/api.generated';
 
-// ==================== Authentication Types ====================
+// --------------------------------------------------------------------
+// Generated-type re-exports — every page imports from `lib/api`, not
+// directly from the generated file, so future schema renames are
+// limited to this one module.
+// --------------------------------------------------------------------
 
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
+export type Schemas = components['schemas'];
+export type Paths = paths;
 
-export interface RegisterRequest {
-  email: string;
-  username: string;
-  full_name: string;
-  password: string;
-}
+export type LoginRequest = Schemas['UserLogin'];
+export type Token = Schemas['Token'];
+export type UserResponse = Schemas['UserResponse'];
 
-export interface AuthResponse {
-  access_token: string;
-  token_type: string;
-  user?: {
-    id: string;
-    email: string;
-    username: string;
-    full_name?: string;
-  };
-}
+// --------------------------------------------------------------------
+// Configuration
+// --------------------------------------------------------------------
 
-export interface User {
-  id: string;
-  email: string;
-  username: string;
-  full_name?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-// API base URL from environment variables
-// Use empty string to make requests through Next.js proxy (avoiding CORS)
-// The proxy is configured in next.config.js to forward /api/v1/* to the backend
-const API_BASE_URL = typeof window !== 'undefined' && window.location.hostname === 'localhost'
-  ? '' // Use Next.js proxy for local development
-  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000');
+const DEFAULT_BASE_URL = 'http://localhost:8002/api/v1';
 
 /**
- * Create configured axios instance
+ * Resolved base URL.
+ *
+ * Order:
+ *   1. `NEXT_PUBLIC_ORION_API_URL` env (set in `.env.local` for dev,
+ *      set in CI / staging / prod via the Next.js build env).
+ *   2. Hard-coded default `http://localhost:8002/api/v1`.
  */
+function resolveBaseUrl(): string {
+  if (typeof process !== 'undefined') {
+    const fromEnv = process.env.NEXT_PUBLIC_ORION_API_URL;
+    if (fromEnv && fromEnv.length > 0) return fromEnv;
+  }
+  return DEFAULT_BASE_URL;
+}
+
+// --------------------------------------------------------------------
+// Axios instance
+// --------------------------------------------------------------------
+
 export const apiClient: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 30000,
+  baseURL: resolveBaseUrl(),
+  timeout: 30_000,
+  // Required for the cookie-mode auth: instructs the browser to send
+  // cookies cross-origin (Next.js dev → Uvicorn) and to accept the
+  // Set-Cookie response header from the backend.
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-/**
- * Request interceptor for adding auth token
- */
-apiClient.interceptors.request.use(
-  (config) => {
-    // Add auth token if available
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('auth_token');
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
+// --------------------------------------------------------------------
+// Refresh-on-401 interceptor
+//
+// Single-flight: while a refresh is in progress, all other 401
+// responses queue up on the same promise. After a successful
+// refresh, queued requests retry with the fresh cookie. If the
+// refresh itself fails or returns 401, every queued request rejects
+// and we redirect to /login.
+// --------------------------------------------------------------------
 
-/**
- * Response interceptor for error handling
- */
+let refreshInFlight: Promise<void> | null = null;
+
+async function refreshAccessToken(): Promise<void> {
+  // The backend reads the orion_refresh_token cookie when ?mode=cookie
+  // is set. No body required.
+  await apiClient.post('/auth/refresh?mode=cookie');
+}
+
 apiClient.interceptors.response.use(
   (response) => response,
-  (error: AxiosError) => {
-    if (error.response) {
-      // Server responded with error status
-      const status = error.response.status;
-      const data = error.response.data as any;
+  async (error: AxiosError) => {
+    const original = error.config as
+      | (InternalAxiosRequestConfig & { __retried?: boolean })
+      | undefined;
+    if (!error.response || !original) return Promise.reject(error);
 
-      if (status === 401) {
-        // Unauthorized - redirect to login
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('auth_token');
-          window.location.href = '/login';
-        }
-      } else if (status === 403) {
-        console.error('Forbidden:', data.detail || 'Access denied');
-      } else if (status === 404) {
-        console.error('Not found:', data.detail || 'Resource not found');
-      } else if (status >= 500) {
-        console.error('Server error:', data.detail || 'Internal server error');
+    const status = error.response.status;
+    const isAuthCall =
+      original.url?.includes('/auth/login') ||
+      original.url?.includes('/auth/refresh');
+
+    // Only attempt refresh on 401 from a non-auth route, and only once.
+    if (status !== 401 || isAuthCall || original.__retried) {
+      if (status === 401 && typeof window !== 'undefined') {
+        // Final 401 — bounce to login with the original path so we
+        // can come back after re-auth.
+        const next = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = `/login?next=${next}`;
       }
-    } else if (error.request) {
-      // Request made but no response
-      console.error('Network error: No response from server');
-    } else {
-      // Error in request setup
-      console.error('Request error:', error.message);
+      return Promise.reject(error);
     }
 
-    return Promise.reject(error);
-  }
+    original.__retried = true;
+    try {
+      if (!refreshInFlight) {
+        refreshInFlight = refreshAccessToken().finally(() => {
+          refreshInFlight = null;
+        });
+      }
+      await refreshInFlight;
+    } catch {
+      // Refresh failed — propagate the original error so the caller's
+      // catch block fires; the next 401 will redirect.
+      return Promise.reject(error);
+    }
+    // Retry with the same config; the new cookies were set on the
+    // refresh response and will travel automatically.
+    return apiClient.request(original);
+  },
 );
 
-/**
- * Generic API error class
- */
+// --------------------------------------------------------------------
+// Error helpers
+// --------------------------------------------------------------------
+
 export class ApiError extends Error {
   constructor(
     message: string,
     public statusCode?: number,
-    public details?: any
+    public details?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
-/**
- * Handle API errors consistently
- */
-function handleApiError(error: any): never {
+export function formatErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
   if (axios.isAxiosError(error)) {
-    const axiosError = error as AxiosError;
-    const data = axiosError.response?.data as any;
+    const data = error.response?.data as { detail?: string } | undefined;
+    return data?.detail ?? error.message ?? 'An error occurred';
+  }
+  if (error instanceof Error) return error.message;
+  return 'An unknown error occurred';
+}
+
+function rethrow(err: unknown): never {
+  if (axios.isAxiosError(err)) {
+    const data = err.response?.data as { detail?: string } | undefined;
     throw new ApiError(
-      data?.detail || error.message,
-      axiosError.response?.status,
-      data
+      data?.detail ?? err.message,
+      err.response?.status,
+      data,
     );
   }
-  throw error;
+  throw err;
 }
 
-// ==================== Structure API ====================
+// --------------------------------------------------------------------
+// Typed wrappers
+// --------------------------------------------------------------------
 
-/**
- * Get a single structure by ID
- */
-export async function getStructure(id: string): Promise<Structure> {
-  try {
-    const response = await apiClient.get<Structure>(`/api/v1/structures/${id}`);
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * List structures with filtering and pagination
- */
-export async function listStructures(
-  params?: StructureListParams
-): Promise<StructureListResponse> {
-  try {
-    const response = await apiClient.get<StructureListResponse>(
-      '/api/v1/structures',
-      { params }
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Search structures by formula or criteria
- */
-export async function searchStructures(
-  query: string,
-  params?: Partial<StructureListParams>
-): Promise<StructureListResponse> {
-  try {
-    const response = await apiClient.get<StructureListResponse>(
-      '/api/v1/structures/search',
-      {
-        params: {
-          q: query,
-          ...params,
-        },
-      }
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Export structure in specified format
- */
-export async function downloadStructure(
-  id: string,
-  format: 'cif' | 'poscar' | 'xyz' | 'json' | 'xsf' = 'cif'
-): Promise<Blob> {
-  try {
-    const response = await apiClient.get(`/api/v1/structures/${id}/export`, {
-      params: { format },
-      responseType: 'blob',
-    });
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Create a new structure
- */
-export async function createStructure(data: Partial<Structure>): Promise<Structure> {
-  try {
-    const response = await apiClient.post<Structure>('/api/v1/structures', data);
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Update an existing structure
- */
-export async function updateStructure(
-  id: string,
-  data: Partial<Structure>
-): Promise<Structure> {
-  try {
-    const response = await apiClient.put<Structure>(
-      `/api/v1/structures/${id}`,
-      data
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Delete a structure
- */
-export async function deleteStructure(id: string): Promise<void> {
-  try {
-    await apiClient.delete(`/api/v1/structures/${id}`);
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-// ==================== Material API ====================
-
-/**
- * Get a single material by ID
- */
-export async function getMaterial(id: string): Promise<Material> {
-  try {
-    const response = await apiClient.get<Material>(`/api/v1/materials/${id}`);
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * List materials with filtering
- */
-export async function listMaterials(params?: {
-  skip?: number;
-  limit?: number;
-  formula?: string;
-  elements?: string[];
-}): Promise<{ items: Material[]; total: number }> {
-  try {
-    const response = await apiClient.get('/api/v1/materials', { params });
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-// ==================== Simulation API ====================
-
-/**
- * Run simulation on a structure
- */
-export async function runSimulation(
-  structureId: string,
-  simulationType: string,
-  parameters?: Record<string, any>
-): Promise<{ job_id: string }> {
-  try {
-    const response = await apiClient.post('/api/v1/simulations', {
-      structure_id: structureId,
-      simulation_type: simulationType,
-      parameters,
-    });
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Get simulation job status
- */
-export async function getSimulationStatus(jobId: string): Promise<any> {
-  try {
-    const response = await apiClient.get(`/api/v1/simulations/${jobId}`);
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-// ==================== Prediction API ====================
-
-/**
- * Predict properties for a structure
- */
-export async function predictProperties(
-  structureId: string,
-  properties: string[]
-): Promise<any> {
-  try {
-    const response = await apiClient.post('/api/v1/predictions', {
-      structure_id: structureId,
-      properties,
-    });
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-// ==================== Upload API ====================
-
-/**
- * Upload structure file (CIF, POSCAR, etc.)
- */
-export async function uploadStructureFile(
-  file: File,
-  metadata?: Record<string, any>
-): Promise<Structure> {
-  try {
-    const formData = new FormData();
-    formData.append('file', file);
-    if (metadata) {
-      formData.append('metadata', JSON.stringify(metadata));
+export const auth = {
+  /**
+   * Cookie-mode login. Sets httpOnly cookies on success and returns
+   * the user payload (no body token usable by JS — that's by design).
+   */
+  async login(body: LoginRequest): Promise<Token> {
+    try {
+      const r = await apiClient.post<Token>(
+        '/auth/login?mode=cookie',
+        body,
+      );
+      return r.data;
+    } catch (e) {
+      rethrow(e);
     }
+  },
 
-    const response = await apiClient.post<Structure>(
-      '/api/v1/structures/upload',
-      formData,
-      {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      }
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-// ==================== Utility Functions ====================
-
-/**
- * Download file from blob
- */
-export function downloadBlob(blob: Blob, filename: string): void {
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  window.URL.revokeObjectURL(url);
-}
-
-/**
- * Format error message for display
- */
-export function formatErrorMessage(error: any): string {
-  if (error instanceof ApiError) {
-    return error.message;
-  }
-  if (axios.isAxiosError(error)) {
-    const data = error.response?.data as any;
-    return data?.detail || error.message || 'An error occurred';
-  }
-  return error.message || 'An unknown error occurred';
-}
-
-// ==================== Design API ====================
-
-/**
- * Search for materials matching design criteria
- */
-export async function searchDesigns(
-  request: DesignSearchRequest
-): Promise<DesignSearchResponse> {
-  try {
-    const response = await apiClient.post<DesignSearchResponse>(
-      '/api/v1/design/search',
-      request
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Get design search statistics
- */
-export async function getDesignStats(): Promise<DesignStats> {
-  try {
-    const response = await apiClient.get<DesignStats>('/api/v1/design/stats');
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-// ==================== Provenance API ====================
-
-/**
- * Get complete provenance chain for an entity
- */
-export async function getProvenance(
-  entityType: string,
-  entityId: string
-): Promise<ProvenanceChain> {
-  try {
-    const response = await apiClient.get<ProvenanceChain>(
-      `/api/v1/provenance/${entityType}/${entityId}`
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Get provenance timeline for UI visualization
- */
-export async function getProvenanceTimeline(
-  entityType: string,
-  entityId: string
-): Promise<ProvenanceTimeline> {
-  try {
-    const response = await apiClient.get<ProvenanceTimeline>(
-      `/api/v1/provenance/${entityType}/${entityId}/timeline`
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Get provenance summary statistics
- */
-export async function getProvenanceSummary(
-  entityType: string,
-  entityId: string
-): Promise<ProvenanceSummary> {
-  try {
-    const response = await apiClient.get<ProvenanceSummary>(
-      `/api/v1/provenance/${entityType}/${entityId}/summary`
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Get provenance for a simulation job (convenience method)
- */
-export async function getJobProvenance(jobId: string): Promise<ProvenanceChain> {
-  try {
-    const response = await apiClient.get<ProvenanceChain>(
-      `/api/v1/provenance/job/${jobId}`
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Get provenance for a prediction (convenience method)
- */
-export async function getPredictionProvenance(predictionId: string): Promise<ProvenanceChain> {
-  try {
-    const response = await apiClient.get<ProvenanceChain>(
-      `/api/v1/provenance/prediction/${predictionId}`
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-// ==================== Authentication API ====================
-
-/**
- * Login with email and password
- */
-export async function login(request: LoginRequest): Promise<AuthResponse> {
-  try {
-    const response = await apiClient.post<AuthResponse>(
-      '/api/v1/auth/login',
-      request
-    );
-    // Store token in localStorage
-    if (response.data.access_token && typeof window !== 'undefined') {
-      localStorage.setItem('auth_token', response.data.access_token);
+  /**
+   * Force a token refresh. The interceptor calls this automatically
+   * on 401 — most callers don't need to.
+   */
+  async refresh(): Promise<void> {
+    try {
+      await apiClient.post('/auth/refresh?mode=cookie');
+    } catch (e) {
+      rethrow(e);
     }
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
+  },
 
-/**
- * Register new user
- */
-export async function register(request: RegisterRequest): Promise<AuthResponse> {
-  try {
-    const response = await apiClient.post<AuthResponse>(
-      '/api/v1/auth/register',
-      request
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Logout user (clear token)
- */
-export async function logout(): Promise<void> {
-  try {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('auth_token');
+  async logout(): Promise<void> {
+    try {
+      await apiClient.post('/auth/logout');
+    } catch {
+      /* swallow — logout is best-effort */
     }
-    // Optionally call backend logout endpoint
-    await apiClient.post('/api/v1/auth/logout');
-  } catch (error) {
-    // Ignore logout errors, token is already cleared
-    console.warn('Logout error:', error);
-  }
-}
+  },
 
-/**
- * Get current user information
- */
-export async function getCurrentUser(): Promise<User> {
-  try {
-    const response = await apiClient.get<User>('/api/v1/auth/me');
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
-
-/**
- * Refresh authentication token
- */
-export async function refreshToken(): Promise<AuthResponse> {
-  try {
-    const response = await apiClient.post<AuthResponse>('/api/v1/auth/refresh');
-    // Store new token
-    if (response.data.access_token && typeof window !== 'undefined') {
-      localStorage.setItem('auth_token', response.data.access_token);
+  async me(): Promise<UserResponse> {
+    try {
+      const r = await apiClient.get<UserResponse>('/auth/me');
+      return r.data;
+    } catch (e) {
+      rethrow(e);
     }
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
+  },
+};
+
+// --------------------------------------------------------------------
+// Generic typed-route helpers — for endpoints that don't have a
+// dedicated wrapper yet. Pages should prefer the dedicated wrappers.
+// --------------------------------------------------------------------
+
+export async function getJson<T>(
+  url: string,
+  config?: AxiosRequestConfig,
+): Promise<T> {
+  try {
+    const r = await apiClient.get<T>(url, config);
+    return r.data;
+  } catch (e) {
+    rethrow(e);
   }
 }
 
-/**
- * Request password reset
- */
-export async function requestPasswordReset(email: string): Promise<{ message: string }> {
+export async function postJson<T, B = unknown>(
+  url: string,
+  body: B,
+  config?: AxiosRequestConfig,
+): Promise<T> {
   try {
-    const response = await apiClient.post<{ message: string }>(
-      '/api/v1/auth/password-reset/request',
-      { email }
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
+    const r = await apiClient.post<T>(url, body, config);
+    return r.data;
+  } catch (e) {
+    rethrow(e);
   }
 }
 
-/**
- * Reset password with token
- */
-export async function resetPassword(
-  token: string,
-  newPassword: string
-): Promise<{ message: string }> {
-  try {
-    const response = await apiClient.post<{ message: string }>(
-      '/api/v1/auth/password-reset/confirm',
-      { token, new_password: newPassword }
-    );
-    return response.data;
-  } catch (error) {
-    return handleApiError(error);
-  }
-}
+// --------------------------------------------------------------------
+// Re-export the shape of every endpoint as a structured catalog.
+// Pages can import `api.structures.list({page, ...})` etc. once
+// the wrapper exists; the underlying types are pulled from `paths`.
+// --------------------------------------------------------------------
+
+export const api = {
+  auth,
+  getJson,
+  postJson,
+  // structures, jobs, ml, al, bo, agent — wrappers added by Sessions
+  // 9.2 / 9.3 / 9.4. Pages can use `api.getJson<...>('/structures')`
+  // in the meantime.
+};
+
+// --------------------------------------------------------------------
+// Legacy named-exports (Session 9.1 compat layer)
+//
+// Re-exported from ./api-legacy so the existing structures / design /
+// provenance pages keep compiling until 9.2 / 9.3 / 9.4 rewrite them.
+// New code should NOT import these — use `api.*` instead.
+// --------------------------------------------------------------------
+
+export {
+  getStructure,
+  listStructures,
+  downloadStructure,
+  uploadStructureFile,
+  getMaterial,
+  runSimulation,
+  predictProperties,
+  downloadBlob,
+  searchDesigns,
+  getDesignStats,
+  getProvenance,
+  getProvenanceTimeline,
+  getProvenanceSummary,
+} from './api-legacy';
+
+export default api;

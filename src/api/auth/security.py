@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Union
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status, Security
+from fastapi import Depends, HTTPException, Request, status, Security
 from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 import secrets
@@ -20,6 +20,11 @@ from ..config import settings
 from ..database import get_db
 from ..models import User
 from ..schemas.auth import TokenData
+
+# Names of the cookies set by /auth/login?mode=cookie. Kept here so the
+# router and the get_current_user dependency agree on the same names.
+ACCESS_COOKIE_NAME = "orion_access_token"
+REFRESH_COOKIE_NAME = "orion_refresh_token"
 
 # Password hashing
 pwd_context = CryptContext(
@@ -156,16 +161,39 @@ class SecurityService:
 
 
 async def get_current_user(
+    request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
     bearer: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     db: AsyncSession = Depends(get_db)
 ) -> User:
-    """Get the current authenticated user from JWT token"""
-    
+    """Get the current authenticated user from JWT token.
+
+    Token sources, in priority order:
+
+    1. ``OAuth2PasswordBearer`` (the ``Authorization: Bearer ...`` header
+       used by the OAuth2 password flow + curl / Postman / the Python
+       test suite).
+    2. ``HTTPBearer`` — same header, alternative scheme used by some
+       routes' explicit ``Security(bearer_scheme)`` dependencies.
+    3. The ``orion_access_token`` httpOnly cookie set by
+       ``POST /auth/login?mode=cookie`` (Phase 9 / Session 9.1 added
+       this for the frontend so the access token is never exposed to
+       JavaScript via ``localStorage``).
+
+    Backward-compatible — bearer-token clients continue to work
+    unchanged; the cookie path is opt-in.
+    """
+
     # Try OAuth2 token first
     if not token and bearer:
         token = bearer.credentials
-    
+
+    # Fall back to the httpOnly cookie set by the Session 9.1 cookie
+    # mode. Reading from request.cookies is cheap; no Authorization
+    # header is required when this branch fires.
+    if not token:
+        token = request.cookies.get(ACCESS_COOKIE_NAME)
+
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -192,8 +220,16 @@ async def get_current_user(
                 detail="Could not validate credentials",
             )
         
-        token_data = TokenData(user_id=user_id)
-        
+        token_data = TokenData(
+            user_id=user_id,
+            username=payload.get("username", ""),
+            role=payload.get("role", ""),
+            # ``exp`` is the JWT expiry in epoch seconds; jose decodes
+            # it as int. TokenData declares ``exp: datetime`` so
+            # convert here.
+            exp=datetime.fromtimestamp(payload.get("exp", 0)),
+        )
+
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

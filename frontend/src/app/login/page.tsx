@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, FormEvent } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, FormEvent, useMemo } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Container,
   Box,
@@ -20,136 +20,63 @@ import { motion } from 'framer-motion'
 import { Lock, Mail } from '@mui/icons-material'
 import toast from 'react-hot-toast'
 
-interface LoginFormData {
-  email: string
-  password: string
-}
+import { useAuth } from '@/lib/auth-context'
+import { formatErrorMessage } from '@/lib/api'
 
-interface LoginResponse {
-  access_token: string
-  token_type: string
-  user: {
-    id: string
-    email: string
-    username: string
-    full_name?: string
-  }
+interface LoginFormData {
+  username: string  // backend accepts username OR email here
+  password: string
 }
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const { login } = useAuth()
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
 
-  // Form state
-  const [formData, setFormData] = useState<LoginFormData>({
-    email: '',
-    password: '',
-  })
+  const next = useMemo(
+    () => searchParams.get('next') ?? '/dashboard',
+    [searchParams],
+  )
 
-  // UI state
+  const [formData, setFormData] = useState<LoginFormData>({ username: '', password: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
 
-  /**
-   * Validate form data
-   */
   const validateForm = (): boolean => {
-    const errors: Record<string, string> = {}
-
-    if (!formData.email.trim()) {
-      errors.email = 'Email is required'
-    } else if (!isValidEmail(formData.email)) {
-      errors.email = 'Please enter a valid email address'
-    }
-
-    if (!formData.password) {
-      errors.password = 'Password is required'
-    } else if (formData.password.length < 6) {
-      errors.password = 'Password must be at least 6 characters'
-    }
-
-    setValidationErrors(errors)
-    return Object.keys(errors).length === 0
+    const errs: Record<string, string> = {}
+    if (!formData.username.trim()) errs.username = 'Username or email is required'
+    if (!formData.password) errs.password = 'Password is required'
+    setValidationErrors(errs)
+    return Object.keys(errs).length === 0
   }
 
-  /**
-   * Validate email format
-   */
-  const isValidEmail = (email: string): boolean => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    return emailRegex.test(email)
-  }
-
-  /**
-   * Handle input change
-   */
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
-    setFormData(prev => ({
-      ...prev,
-      [name]: value,
-    }))
-    // Clear validation error for this field
+    setFormData((prev) => ({ ...prev, [name]: value }))
     if (validationErrors[name]) {
-      setValidationErrors(prev => ({
-        ...prev,
-        [name]: '',
-      }))
+      setValidationErrors((prev) => ({ ...prev, [name]: '' }))
     }
   }
 
-  /**
-   * Handle form submission
-   */
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-
-    // Validate form
     if (!validateForm()) {
       setError('Please fix the errors below')
       return
     }
-
     setLoading(true)
     setError('')
-
     try {
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/auth/login`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            email: formData.email,
-            password: formData.password,
-          }),
-        }
-      )
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || 'Login failed')
-      }
-
-      const data: LoginResponse = await response.json()
-
-      // Store token in localStorage
-      localStorage.setItem('auth_token', data.access_token)
-
-      // Show success message
+      await login(formData)
       toast.success('Login successful!')
-
-      // Redirect to home page
-      router.push('/')
+      router.push(next)
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An error occurred during login'
-      setError(errorMessage)
-      toast.error(errorMessage)
-      console.error('Login error:', err)
+      const msg = formatErrorMessage(err)
+      setError(msg)
+      toast.error(msg)
     } finally {
       setLoading(false)
     }
@@ -174,21 +101,10 @@ export default function LoginPage() {
         >
           <Paper
             elevation={8}
-            sx={{
-              p: { xs: 3, md: 4 },
-              borderRadius: 2,
-              backgroundColor: 'background.paper',
-            }}
+            sx={{ p: { xs: 3, md: 4 }, borderRadius: 2, backgroundColor: 'background.paper' }}
           >
-            {/* Header */}
             <Box sx={{ textAlign: 'center', mb: 4 }}>
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  mb: 2,
-                }}
-              >
+              <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
                 <Box
                   sx={{
                     width: 56,
@@ -211,55 +127,43 @@ export default function LoginPage() {
               </Typography>
             </Box>
 
-            {/* Error Alert */}
             {error && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
               >
                 <Alert
                   severity="error"
                   sx={{ mb: 3, borderRadius: 1 }}
                   onClose={() => setError('')}
+                  data-testid="login-error"
                 >
                   {error}
                 </Alert>
               </motion.div>
             )}
 
-            {/* Login Form */}
             <Box component="form" onSubmit={handleSubmit} noValidate>
               <Grid container spacing={2}>
-                {/* Email Field */}
                 <Grid item xs={12}>
                   <TextField
                     fullWidth
-                    label="Email Address"
-                    name="email"
-                    type="email"
-                    value={formData.email}
+                    label="Username or Email"
+                    name="username"
+                    type="text"
+                    value={formData.username}
                     onChange={handleInputChange}
-                    error={!!validationErrors.email}
-                    helperText={validationErrors.email}
-                    placeholder="you@example.com"
+                    error={!!validationErrors.username}
+                    helperText={validationErrors.username}
+                    placeholder="scientist@orion.dev"
                     disabled={loading}
+                    inputProps={{ 'data-testid': 'login-username' }}
                     InputProps={{
-                      startAdornment: (
-                        <Mail sx={{ mr: 1.5, color: 'text.secondary' }} />
-                      ),
-                    }}
-                    sx={{
-                      '& .MuiOutlinedInput-root': {
-                        '&:hover fieldset': {
-                          borderColor: 'primary.main',
-                        },
-                      },
+                      startAdornment: <Mail sx={{ mr: 1.5, color: 'text.secondary' }} />,
                     }}
                   />
                 </Grid>
 
-                {/* Password Field */}
                 <Grid item xs={12}>
                   <TextField
                     fullWidth
@@ -272,45 +176,13 @@ export default function LoginPage() {
                     helperText={validationErrors.password}
                     placeholder="Enter your password"
                     disabled={loading}
+                    inputProps={{ 'data-testid': 'login-password' }}
                     InputProps={{
-                      startAdornment: (
-                        <Lock sx={{ mr: 1.5, color: 'text.secondary' }} />
-                      ),
-                    }}
-                    sx={{
-                      '& .MuiOutlinedInput-root': {
-                        '&:hover fieldset': {
-                          borderColor: 'primary.main',
-                        },
-                      },
+                      startAdornment: <Lock sx={{ mr: 1.5, color: 'text.secondary' }} />,
                     }}
                   />
                 </Grid>
 
-                {/* Remember Me & Forgot Password */}
-                <Grid item xs={12}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Typography variant="caption" color="text.secondary">
-                      Keep me signed in
-                    </Typography>
-                    <Link
-                      href="/forgot-password"
-                      underline="hover"
-                      sx={{
-                        fontSize: '0.875rem',
-                        cursor: 'pointer',
-                        color: 'primary.main',
-                        '&:hover': {
-                          textDecoration: 'underline',
-                        },
-                      }}
-                    >
-                      Forgot Password?
-                    </Link>
-                  </Box>
-                </Grid>
-
-                {/* Submit Button */}
                 <Grid item xs={12}>
                   <Button
                     fullWidth
@@ -318,24 +190,19 @@ export default function LoginPage() {
                     size="large"
                     type="submit"
                     disabled={loading}
+                    data-testid="login-submit"
                     sx={{
                       py: 1.5,
                       fontSize: '1rem',
                       fontWeight: 600,
                       textTransform: 'none',
                       background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
-                      '&:hover': {
-                        opacity: 0.9,
-                      },
-                      '&:disabled': {
-                        opacity: 0.6,
-                      },
                     }}
                   >
                     {loading ? (
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <CircularProgress size={20} sx={{ color: 'white' }} />
-                        Signing in...
+                        Signing in…
                       </Box>
                     ) : (
                       'Sign In'
@@ -343,92 +210,22 @@ export default function LoginPage() {
                   </Button>
                 </Grid>
 
-                {/* Divider */}
-                <Grid item xs={12}>
-                  <Box sx={{ position: 'relative', my: 2 }}>
-                    <Box
-                      sx={{
-                        position: 'absolute',
-                        left: 0,
-                        right: 0,
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        borderTop: `1px solid ${theme.palette.divider}`,
-                      }}
-                    />
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        position: 'relative',
-                        px: 2,
-                        display: 'inline-block',
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        backgroundColor: 'background.paper',
-                        color: 'text.secondary',
-                      }}
-                    >
-                      Don't have an account?
-                    </Typography>
-                  </Box>
-                </Grid>
-
-                {/* Register Link */}
                 <Grid item xs={12}>
                   <Typography align="center" variant="body2">
-                    <Link
-                      href="/register"
-                      underline="none"
-                      sx={{
-                        color: 'primary.main',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        '&:hover': {
-                          textDecoration: 'underline',
-                        },
-                      }}
-                    >
+                    Don&apos;t have an account?{' '}
+                    <Link href="/register" underline="hover" sx={{ color: 'primary.main', fontWeight: 600 }}>
                       Create an account
                     </Link>
                   </Typography>
                 </Grid>
               </Grid>
             </Box>
-
-            {/* Footer Text */}
-            <Typography
-              variant="caption"
-              align="center"
-              sx={{
-                display: 'block',
-                mt: 3,
-                color: 'text.secondary',
-              }}
-            >
-              By signing in, you agree to our{' '}
-              <Link href="/terms" underline="hover">
-                Terms of Service
-              </Link>
-              {' '}and{' '}
-              <Link href="/privacy" underline="hover">
-                Privacy Policy
-              </Link>
-            </Typography>
           </Paper>
         </motion.div>
 
-        {/* Responsive spacing */}
         {!isMobile && (
-          <Box
-            sx={{
-              mt: 4,
-              textAlign: 'center',
-              color: 'rgba(255,255,255,0.7)',
-            }}
-          >
-            <Typography variant="body2">
-              ORION AI-Driven Materials Science Platform
-            </Typography>
+          <Box sx={{ mt: 4, textAlign: 'center', color: 'rgba(255,255,255,0.7)' }}>
+            <Typography variant="body2">ORION AI-Driven Materials Science Platform</Typography>
           </Box>
         )}
       </Container>

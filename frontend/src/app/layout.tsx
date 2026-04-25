@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { theme } from '@/lib/theme'
 import { AppBar } from '@/components/layout/AppBar'
 import { Footer } from '@/components/layout/Footer'
+import { AuthProvider } from '@/lib/auth-context'
 
 import './globals.css'
 
@@ -39,13 +40,15 @@ export default function RootLayout({
         <QueryClientProvider client={queryClient}>
           <ThemeProvider theme={theme}>
             <CssBaseline />
-            <div className="flex flex-col min-h-screen">
-              <AppBar />
-              <main className="flex-grow">
-                {children}
-              </main>
-              <Footer />
-            </div>
+            <AuthProvider>
+              <div className="flex flex-col min-h-screen">
+                <AppBar />
+                <main className="flex-grow">
+                  {children}
+                </main>
+                <Footer />
+              </div>
+            </AuthProvider>
           </ThemeProvider>
         </QueryClientProvider>
       </body>
