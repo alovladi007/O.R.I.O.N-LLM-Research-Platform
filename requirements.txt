@@ -28,6 +28,13 @@ pytorch-lightning>=2.0.0,<3.0.0    # Phase 6 / Session 6.4 CGCNN training loop
 torchmetrics>=1.0.0                # Phase 6 / Session 6.4 standard metric logging
 botorch>=0.10.0,<0.13.0            # Phase 7 / Session 7.1 Bayesian optimization (pulls in gpytorch + linear-operator)
 phonopy>=3.0.0,<4.0.0              # Phase 8 / Session 8.2 phonon workflow (finite-displacements + DOS + thermo)
+# pymatgen-analysis-defects: optional. Used by backend/common/defects/chempot.py
+# for the PhaseDiagram-based chemical-potential bounds when DFT data is wired
+# in 8.3b. The closed-form formation-energy formula and Makov-Payne monopole
+# correction in Session 8.3 do NOT depend on this package, so the core engine
+# imports cleanly without it. Pin <2025 to keep numpy 1.x compatibility with
+# torch 2.2 (newer releases require numpy>=2 which breaks torch interop).
+# pymatgen-analysis-defects>=2024.0,<2025
 
 # Optional (not pinned here):
 #   mp-api<0.45 + emmet-core<0.85 — for scripts/orion_fetch_mp_oxides.py.
