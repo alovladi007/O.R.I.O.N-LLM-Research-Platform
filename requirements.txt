@@ -84,7 +84,16 @@ itsdangerous>=2.1.0          # starlette.middleware.sessions.SessionMiddleware
 # are imported from src.api.auth.security on every request path).
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
-bcrypt>=4.0.0
+# bcrypt 5.0 dropped the ``__about__`` module that passlib uses to detect
+# the installed bcrypt version. With bcrypt 5 + passlib the version
+# detection silently fails, passlib falls back to assuming the strictest
+# legacy limit, and every password longer than 72 bytes is rejected with
+# ``ValueError: password cannot be longer than 72 bytes``. The Phase 9.1
+# auth-cookie tests trip this on a 16-byte password because the
+# detection failure also triggers a parallel hashing-backend warning
+# that bubbles to ERROR. Cap until passlib ships a fix (active issue
+# at github.com/jvanasco/passlib/issues/190).
+bcrypt>=4.0.0,<5.0.0
 pyjwt>=2.8.0
 
 # Object storage (MinIO, used by the artifacts + bulk-import pipelines).
