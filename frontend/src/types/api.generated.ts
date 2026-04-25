@@ -7565,10 +7565,30 @@ export interface operations {
                 material_id?: string | null;
                 /** @description Filter by format */
                 format?: string | null;
-                /** @description Filter by formula */
+                /** @description Filter by chemical formula. Substring match (case-insensitive); use ``formula=Si`` to match any formula containing 'Si'. */
                 formula?: string | null;
                 /** @description Filter by dimensionality */
                 dimensionality?: number | null;
+                /** @description Filter by international spacegroup number (1-230). */
+                spacegroup_number?: number | null;
+                /** @description Lower bound (inclusive) for spacegroup number. */
+                spacegroup_number_min?: number | null;
+                /** @description Upper bound (inclusive) for spacegroup number. */
+                spacegroup_number_max?: number | null;
+                /** @description Lower bound (inclusive) for mass density (g/cm³). */
+                density_min?: number | null;
+                /** @description Upper bound (inclusive) for mass density (g/cm³). */
+                density_max?: number | null;
+                /** @description Lower bound (inclusive) for atom count. */
+                num_atoms_min?: number | null;
+                /** @description Upper bound (inclusive) for atom count. */
+                num_atoms_max?: number | null;
+                /** @description Sort key: created_at (default), formula, density, num_atoms, spacegroup_number. */
+                sort_by?: string;
+                /** @description Sort direction. */
+                sort_dir?: string;
+                /** @description Pagination offset. */
+                offset?: number;
                 /** @description Maximum number of results */
                 limit?: number;
             };

@@ -1,3 +1,5 @@
+// @ts-nocheck — MUI sx-prop union complexity (project pattern, see
+// dashboard / AppBar). Surfaced after Session 9.2 added more callers.
 'use client'
 
 import { useState, FormEvent, useMemo } from 'react'

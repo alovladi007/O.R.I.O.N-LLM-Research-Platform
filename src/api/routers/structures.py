@@ -493,44 +493,127 @@ async def create_structure(
     }
 )
 async def list_structures(
+    response: Response,
     material_id: Optional[uuid.UUID] = Query(None, description="Filter by material ID"),
     format: Optional[str] = Query(None, description="Filter by format"),
-    formula: Optional[str] = Query(None, description="Filter by formula"),
+    formula: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by chemical formula. Substring match (case-insensitive); "
+            "use ``formula=Si`` to match any formula containing 'Si'."
+        ),
+    ),
     dimensionality: Optional[int] = Query(None, ge=0, le=3, description="Filter by dimensionality"),
+    spacegroup_number: Optional[int] = Query(
+        None, ge=1, le=230,
+        description="Filter by international spacegroup number (1-230).",
+    ),
+    spacegroup_number_min: Optional[int] = Query(
+        None, ge=1, le=230,
+        description="Lower bound (inclusive) for spacegroup number.",
+    ),
+    spacegroup_number_max: Optional[int] = Query(
+        None, ge=1, le=230,
+        description="Upper bound (inclusive) for spacegroup number.",
+    ),
+    density_min: Optional[float] = Query(
+        None, ge=0.0,
+        description="Lower bound (inclusive) for mass density (g/cm³).",
+    ),
+    density_max: Optional[float] = Query(
+        None, ge=0.0,
+        description="Upper bound (inclusive) for mass density (g/cm³).",
+    ),
+    num_atoms_min: Optional[int] = Query(
+        None, ge=0, description="Lower bound (inclusive) for atom count.",
+    ),
+    num_atoms_max: Optional[int] = Query(
+        None, ge=0, description="Upper bound (inclusive) for atom count.",
+    ),
+    sort_by: str = Query(
+        "created_at",
+        description=(
+            "Sort key: created_at (default), formula, density, num_atoms, "
+            "spacegroup_number."
+        ),
+    ),
+    sort_dir: str = Query(
+        "desc",
+        regex="^(asc|desc)$",
+        description="Sort direction.",
+    ),
+    offset: int = Query(0, ge=0, description="Pagination offset."),
     limit: int = Query(100, ge=1, le=500, description="Maximum number of results"),
     db: AsyncSession = Depends(get_db)
 ) -> List[StructureResponse]:
     """
-    Get list of structures with filtering.
+    Get list of structures with filtering, sorting, and pagination.
+
+    Phase 9 / Session 9.2 added the spacegroup / density / num_atoms
+    range filters and the ``offset`` pagination knob to support the
+    DataGrid on /structures. The ``X-Total-Count`` response header
+    carries the unfiltered-by-pagination row count so the grid can
+    render a correct page count.
     """
-    logger.debug(f"Listing structures: material_id={material_id}")
+    logger.debug(
+        "Listing structures: material_id=%s offset=%d limit=%d sort=%s/%s",
+        material_id, offset, limit, sort_by, sort_dir,
+    )
 
-    # Build query
-    query = select(Structure)
-
-    # Apply filters
+    # Build the filter clause once; we apply it to both the count
+    # query and the page query so the X-Total-Count header is honest.
+    filters = []
     if material_id:
-        query = query.where(Structure.material_id == material_id)
-
+        filters.append(Structure.material_id == material_id)
     if format:
-        query = query.where(Structure.format == format)
-
+        filters.append(Structure.format == format)
     if formula:
-        query = query.where(Structure.formula == formula)
-
+        # Case-insensitive substring match — the legacy exact-match
+        # was too strict for the DataGrid's "starts-with" filter.
+        filters.append(Structure.formula.ilike(f"%{formula}%"))
     if dimensionality is not None:
-        query = query.where(Structure.dimensionality == dimensionality)
+        filters.append(Structure.dimensionality == dimensionality)
+    if spacegroup_number is not None:
+        filters.append(Structure.space_group_number == spacegroup_number)
+    if spacegroup_number_min is not None:
+        filters.append(Structure.space_group_number >= spacegroup_number_min)
+    if spacegroup_number_max is not None:
+        filters.append(Structure.space_group_number <= spacegroup_number_max)
+    if density_min is not None:
+        filters.append(Structure.density >= density_min)
+    if density_max is not None:
+        filters.append(Structure.density <= density_max)
+    if num_atoms_min is not None:
+        filters.append(Structure.num_atoms >= num_atoms_min)
+    if num_atoms_max is not None:
+        filters.append(Structure.num_atoms <= num_atoms_max)
 
-    # Sort and limit
-    query = query.order_by(Structure.created_at.desc()).limit(limit)
+    sort_column_map = {
+        "created_at": Structure.created_at,
+        "formula": Structure.formula,
+        "density": Structure.density,
+        "num_atoms": Structure.num_atoms,
+        "spacegroup_number": Structure.space_group_number,
+    }
+    sort_col = sort_column_map.get(sort_by, Structure.created_at)
+    sort_clause = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
 
-    # Load relationships
+    # Total count (filtered, not paginated).
+    count_q = select(func.count()).select_from(Structure)
+    if filters:
+        count_q = count_q.where(and_(*filters))
+    total = (await db.execute(count_q)).scalar_one() or 0
+    response.headers["X-Total-Count"] = str(int(total))
+
+    # Page query.
+    query = select(Structure)
+    if filters:
+        query = query.where(and_(*filters))
+    query = query.order_by(sort_clause).offset(offset).limit(limit)
     query = query.options(selectinload(Structure.material))
 
-    # Execute
     result = await db.execute(query)
     structures = result.scalars().all()
-
     return [StructureResponse.model_validate(s) for s in structures]
 
 

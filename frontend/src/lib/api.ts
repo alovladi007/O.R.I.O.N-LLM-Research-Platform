@@ -276,13 +276,28 @@ export async function postJson<T, B = unknown>(
 // the wrapper exists; the underlying types are pulled from `paths`.
 // --------------------------------------------------------------------
 
+import { structures } from './api-structures';
+
+// Re-export auth-context hooks so pages have one import surface for
+// "platform-wide concerns" (api wrappers + auth + role gate).
+export { useAuth, useRequireRole } from './auth-context';
+export { structures } from './api-structures';
+export type {
+  StructureListParams,
+  StructureListResult,
+  StructureResponse as StructureRow,
+  StructureCreate as StructureCreateBody,
+  StructureUpdate as StructureUpdateBody,
+  StructureParseRequest,
+  StructureParseResponse,
+} from './api-structures';
+
 export const api = {
   auth,
+  structures,
   getJson,
   postJson,
-  // structures, jobs, ml, al, bo, agent — wrappers added by Sessions
-  // 9.2 / 9.3 / 9.4. Pages can use `api.getJson<...>('/structures')`
-  // in the meantime.
+  // jobs, ml, al, bo, agent — wrappers added by Sessions 9.3 / 9.4.
 };
 
 // --------------------------------------------------------------------
